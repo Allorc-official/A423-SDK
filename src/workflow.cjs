@@ -31,7 +31,7 @@ const RULES = {
 };
 /** Pure canonical JSON SHA-256. This is an integrity commitment, not authentication. */
 function hashAgreement(terms) { return digest(terms); }
-function createWorkflow({ store, adapters = {}, authorize, validateTerms, transitions = {} } = {}) {
+function createWorkflow({ store, adapters = {}, authorize, validateTerms, validateEvidence, transitions = {} } = {}) {
   if (!store || ['get', 'create', 'compareAndSet'].some(k => typeof store[k] !== 'function')) throw new TypeError('Supply an atomic workflow store');
   const rules = copy(RULES);
   for (const [action, rule] of Object.entries(transitions)) {
@@ -70,6 +70,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, transi
       return save(job, next, pending.action + '.rejected', pending.actor, result);
     }
     if (!result.evidence || typeof result.evidence !== 'object' || Array.isArray(result.evidence)) error('INVALID_ADAPTER_RESULT', 'Confirmed effects require structured evidence', 502);
+    if(validateEvidence)await validateEvidence({job:copy(job),action:pending.action,evidence:copy(result.evidence)});
     const next = copy(job); next.pending = null; next.state = pending.target;
     next.operations[pending.key] = { request_hash: pending.request_hash, status: 'confirmed', result: copy(result) };
     next.evidence.push({ action: pending.action, operation_id: pending.id, evidence: copy(result.evidence) });
@@ -99,10 +100,13 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, transi
       return copy(job);
     },
     get,
+    async assertSafe(id,actor){const job=await get(id,actor);const safety=store.getSafety?await store.getSafety(id):null;if(safety?.blocked)error('SAFETY_HOLD','Evidence requires reconciliation',409);return job;},
     async act(id, action, input, { actor, idempotencyKey } = {}) {
       identifier(actor); identifier(idempotencyKey); identifier(action); canonical(input);
       let job = await get(id, actor);
-      const rule = rules[action];
+      const safety=store.getSafety ? await store.getSafety(id) : null;
+      if(safety?.blocked) error('SAFETY_HOLD','Evidence requires reconciliation before further actions',409);
+      const rule = Object.hasOwn(rules,action) ? rules[action] : null;
       if (!rule) error('UNKNOWN_ACTION', 'Unknown workflow action', 400);
       await allowed(job, action, actor, input, rule);
       const key = digest([actor, idempotencyKey]);
@@ -135,6 +139,14 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, transi
       next.state = action === 'accept' && [job.participants.requester, job.participants.worker].every(p => next.agreement.accepted_by.includes(p)) ? 'accepted' : rule.to;
       next.operations[key] = { request_hash: requestHash, status: 'confirmed', result: { status: 'confirmed' } };
       return save(job, next, action, actor, input);
+    },
+    async resume(id, actor) {
+      const job=await get(id,actor);
+      if(!job.pending)return job;
+      const safety=store.getSafety ? await store.getSafety(id) : null;
+      if(safety?.blocked)error('SAFETY_HOLD','Evidence requires reconciliation',409);
+      await allowed(job,job.pending.action,actor,job.pending.input,rules[job.pending.action]);
+      return execute(job);
     },
     async reconcile(id, actor) {
       const job = await get(id, actor);

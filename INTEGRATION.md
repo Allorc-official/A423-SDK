@@ -1,9 +1,15 @@
+# Integration update for 0.4
+
+Read OPERATIONS.md before following the older integration checklist below. Persistence, authority credentials, renewal, spending authorization, application projections/chat tools, keeper/resume, execution queue, watcher/indexer, PDF receipts and a local UI shell are now provided as concrete modules. Choose the supplied implementation or adapt deliberately.
+
+The remote MVP was not available in the SDK workspace; these utilities do not imply its existing routes or configuration have changed. Wire them into the actual app and run its tests. Deploy new contracts only with explicit deployment authorization; retain legacy custody records on their original contracts.
+
 # Integration instructions for the MVP coding agent
 
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.3.0
+npm install @allorc/a423-sdk@0.4.0
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.
@@ -28,7 +34,7 @@ Integrate the opt-in `@allorc/a423-sdk/workflow` API into the existing MVP. Insp
 8. Implement `release.execute/reconcile`, checking caller role, recorded verification and actual payment evidence. Verify exact amount/recipient and relevant event. The SDK state guard does not change contract rules; document whether the contract itself requires submission. Never infer successful payment from a broadcast hash alone.
 9. Implement `refund.execute/reconcile` based on actual contract eligibility. The default rule allows requesting a refund while funded/running; the adapter must enforce the deadline and absence of submission. Submitted disputes require an explicit supported resolution policy. Implement `resolve` only when that policy exists; confirmed resolution evidence must state whether money was released, refunded or remains locked. `resolved` alone does not imply payment.
 10. Add application deadline/expiry checks to authorization and the `expire` adapter. Schedule sweeps with authorized roles. Cancellation only applies before funding in the default workflow. Do not claim automatic sweeps or a dispute timeout exist if they are not implemented.
-11. Configure each adapter's `reconcile` to inspect the provider using durable operation records. Unknown outcomes remain pending. Poll/reconcile in a durable worker. Handle configured confirmations, disappearing observations and reorgs according to the app's policy; the SDK does not include a chain watcher. Add explicit corrective transitions/policies if required rather than editing records outside CAS.
+11. Configure each adapter's `reconcile` to inspect the provider using durable operation records. Unknown outcomes remain pending. Poll/reconcile in a durable worker. Handle configured confirmations, disappearing observations and reorgs according to the app's policy; configure watchEvidenceOnce and the incremental indexer. Add explicit corrective transitions/policies if required rather than editing records outside CAS.
 12. Expose `createWorkflowHandler` through a Node-runtime Next.js catch-all route. Use `createWorkflowClient` or documented HTTP endpoints externally. The old root API and new workflow API use distinct models; migrate the client deliberately.
 13. Build machine-readable receipts through `workflow.receipts`. Revalidate chain evidence before generating chain-backed PDFs; derive amounts/participants from validated observations and use actual token decimals. Distinguish cached observations from freshly checked evidence.
 

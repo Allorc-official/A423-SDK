@@ -1,11 +1,11 @@
-# Reference on-chain escrow (0.3.0)
+# Reference on-chain escrow (0.4.0)
 
 This opt-in module implements a real ERC-20 escrow path. The generic workflow remains provider-independent. It includes Solidity source, reproducibly compiled ABI/bytecode, an ethers v6 adapter and local-EVM tests. It is experimental and has not received an independent security audit; deploy to a local chain/testnet for evaluation. No contract is deployed automatically and no funds move merely by installing the package.
 
 ## Installation and deployment
 
 ```sh
-npm install @allorc/a423-sdk@0.3.0 ethers@^6.15.0
+npm install @allorc/a423-sdk@0.4.0 ethers@^6.15.0
 ```
 
 ```ts
@@ -44,7 +44,7 @@ const terms = {
 
 All deadlines are absolute Unix seconds and strictly increasing. The work deadline must be in the future at funding. `amount` is a positive uint256 decimal string. The SHA-256 hash of the entire canonical terms object is stored on-chain; it includes payment rules and the task criteria. The Solidity EIP-712 terms digest is a separate encoding for worker consent. `jobId` is SHA-256 of UTF-8 `a423:escrow:v1:` plus the application job ID. One job ID may only be funded once per deployed contract.
 
-The arbitrator must differ from payer and worker. The verifier may be the payer: this is a trusted verifier policy, not trustless proof of output quality. The reference contract supports EOA EIP-712 worker signatures using ECDSA; ERC-1271 smart account worker signatures are not implemented. Use another adapter/contract for that capability.
+The arbitrator must differ from payer and worker. The verifier may be the payer: this is a trusted verifier policy, not trustless proof of output quality. The 0.4 reference contract supports EOA EIP-712 worker signatures and ERC-1271 wallet signatures. Existing 0.3 deployments remain EOA-only. For smart-account transaction execution, submit through the account wallet and supply verified `transaction_hash` evidence to the SDK; the raw-transaction sender itself is still an EOA/managed signer.
 
 ## Connect Next.js and the workflow
 
@@ -61,6 +61,7 @@ const adapters = createEscrowAdapters({
   transactions: durableTransactionStore,
   signerFor: async actor => signerRegistry.getSigner(actor),
   addressFor: async actor => signerRegistry.getAddress(actor),
+  authorizeTransaction, // REQUIRED: spending/delegation policy; see OPERATIONS.md
   validateArtifact: async ({ job, resultHash }) => {
     // Fetch exact bytes, check digest and evaluate accepted criteria.
     // Return true only after all checks pass.
@@ -119,7 +120,7 @@ To automatically initiate funding after the second acceptance, orchestrate the a
 
 A verifier can approve and release before a dispute is opened; there is no guaranteed challenge window or objective quality oracle. Rejected artifact verification leaves the workflow submitted and clears pending, allowing a dispute. The contract enforces that submission and verifier approval exist; the application verifier still judges task quality. For resubmission/milestones, use a separate contract policy: the reference contract permits one immutable submission and one settlement, not partial milestone releases. Arbitration can split the one escrow.
 
-Cancellation and quote expiry before funding remain workflow/application policies and move no tokens. The reference module does not supply a scheduler or a governor registry.
+Cancellation and quote expiry before funding remain workflow/application policies and move no tokens. The optional operations/authority modules provide keeper ticks and an explicit registry; configure and run them as described in OPERATIONS.md.
 
 ## Recovery and journal requirements
 
@@ -131,13 +132,13 @@ Implement `TransactionStore`:
 - `create(id, record)`: atomic insert-if-absent; return boolean. Never overwrite an existing signed transaction.
 - `reserveNonce(scope, minimum, operationId)`: transactionally allocate per-chain/address nonces, at least the RPC pending nonce; the same operation must always retrieve its original reservation. Every process using the account must coordinate through this allocator. External wallet activity requires an explicit operational policy.
 
-`createMemoryTransactionStore()` is only for tests. Production needs a real database implementation. A crash after nonce reservation but before journaling must resume that operation to fill its reserved nonce; later transactions may remain blocked behind it. No automatic fee replacement/cancellation is included. A genuinely stuck transaction requires deliberate recovery with the same nonce and updated journal lineage; do not blindly assign a new nonce. Prefer dedicated signer accounts to uncontrolled mixed wallet usage.
+`createMemoryTransactionStore()` is only for tests. Production needs a real database implementation. A crash after nonce reservation but before journaling must resume that operation to fill its reserved nonce; later transactions may remain blocked behind it. The optional bounded fee replacement worker can journal a same-nonce fee increase under explicit caps; there is no automatic cancellation. A genuinely stuck transaction requires deliberate recovery with the same nonce and updated journal lineage; do not blindly assign a new nonce. Prefer dedicated signer accounts to uncontrolled mixed wallet usage.
 
 `reconcile` only observes existing journal entries and never signs/broadcasts. If an approval is confirmed but the funding transaction has not yet been created, reconcile returns pending; retry the original fund action/key to authorise progression. After a signed transaction is journaled but not broadcast, execute retries rebroadcast the identical bytes. After broadcast/mining but before the workflow write, reconcile verifies and adopts its evidence. Explicit `rejected` results permit a deliberate new attempt with a new action key; an unknown network outcome stays pending or throws with the pending record retained.
 
 For externally submitted transactions, pass `transaction_hash` in the action input from the beginning (in addition to the normal fields). The adapter observes it without broadcasting and checks the configured contract, exact agreement, action event and allocation. This supports recording permissionless refunds/timeouts submitted by a keeper or another account. Use the correct workflow action; it cannot adopt arbitrary unrelated transfers. Supplying an incorrect hash fails closed and leaves pending for investigation; do not change persisted input to hide errors.
 
-RPC chain ID and immutable token are checked; event emitter, job ID, agreement hash, all stored terms, event amounts and results are verified. Evidence contains transaction/block hash and required confirmation depth. Readers need historical state access for the receipt block. The adapter checks current canonical inclusion at observation time; confirmations are a configurable risk policy, not an absolute finality guarantee. There is no continuous reorg watcher or automatic rollback of already completed workflow states. A production chain integration must monitor disappearing evidence and suspend/reconcile affected work explicitly. Chain outages preserve uncertainty and cannot be repaired by SDK code.
+RPC chain ID and immutable token are checked; event emitter, job ID, agreement hash, all stored terms, event amounts and results are verified. Evidence contains transaction/block hash and required confirmation depth. Readers need historical state access for the receipt block. The adapter checks current canonical inclusion at observation time; confirmations are a configurable risk policy, not an absolute finality guarantee. The operations watcher can continuously revalidate evidence and place affected jobs on a safety hold. It does not automatically roll back completed financial states or erase observations; reconcile re-included transactions through an explicitly reviewed recovery procedure. Chain outages preserve uncertainty and cannot be repaired by SDK code.
 
 No timeout is automatic: a keeper or participant must submit a transaction, and the chain must process it. Deadlines provide an eligible escape path under the agreed allocation; they do not guarantee execution during censorship, chain failure or broken token transfers.
 

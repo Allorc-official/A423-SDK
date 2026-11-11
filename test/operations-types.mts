@@ -1,0 +1,15 @@
+import {generateKeyPairSync} from 'node:crypto';
+import {createSqliteStorage} from '@allorc/a423-sdk/storage';
+import {createAuthority,createCredentialAuthenticator,createCredentialProvider} from '@allorc/a423-sdk/authority';
+import {createWorkflow} from '@allorc/a423-sdk/workflow';
+import {createExpiryAdapter,createApplicationHandler,createSpendingAuthorizer,createChatTools,runMaintenanceOnce,runExecutionOnce,createWebhookDispatcher,watchEvidenceOnce} from '@allorc/a423-sdk/operations';
+const db=createSqliteStorage({filename:':memory:'});
+const authority=createAuthority({issuer:'test',audience:'test',kv:db.kv,privateKey:generateKeyPairSync('ed25519').privateKey});
+const authenticate=createCredentialAuthenticator({authority});
+const workflow=createWorkflow({store:db.jobs,adapters:{expire:createExpiryAdapter()}});
+const handler=createApplicationHandler({workflow,store:db.jobs,queue:db.queue,authenticate,revalidate:async()=>({status:'valid'})});
+const spending=createSpendingAuthorizer({spending:db.spending,limitsFor:async()=>({perTransaction:'10',daily:'100',total:'1000'}),authorize:async()=>true});
+createChatTools({workflow,store:db.jobs,queue:db.queue,actor:'buyer'});
+createWebhookDispatcher({queue:db.queue,kv:db.kv,subscriptions:[],secretFor:async()=> 'a'.repeat(32)});
+void handler;void spending;void runMaintenanceOnce;void runExecutionOnce;void watchEvidenceOnce;void createCredentialProvider;
+db.close();

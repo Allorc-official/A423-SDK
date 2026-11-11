@@ -25,10 +25,11 @@ before(async()=>{
 after(async()=>{await provider?.destroy();await rpc?.disconnect();});
 async function fixture(id,options={}) {
  const now=(await provider.getBlock('latest')).timestamp;
- const terms={task:'any domain',escrow:{chain_id:'31337',contract:config.contractAddress,token:config.tokenAddress,amount:'100',payer:wallets[0].address,worker:wallets[1].address,verifier:wallets[2].address,arbitrator:wallets[3].address,work_deadline:now+100,review_deadline:now+200,resolution_deadline:now+300,timeout_worker_bps:2500}};
- const transactions=createMemoryTransactionStore();
- const adapters=createEscrowAdapters({provider,...config,signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,transactions,confirmations:1,validateArtifact:async()=>true,...options});
- const w=createWorkflow({store:createMemoryStore(),adapters,transitions:escrowTransitions});
+ const terms={task:{id:'task',type:'research',description:'any domain',deliverables:[{id:'report',media_type:'text/markdown',description:'report'}],acceptance:{validator:'test',version:'1',criteria:{}}},escrow:{chain_id:'31337',contract:config.contractAddress,token:config.tokenAddress,amount:'100',payer:wallets[0].address,worker:wallets[1].address,verifier:wallets[2].address,arbitrator:wallets[3].address,work_deadline:now+100,review_deadline:now+200,resolution_deadline:now+300,timeout_worker_bps:2500}};
+ Object.assign(terms.escrow,options.escrowOverrides||{});
+ const transactions=options.transactions||createMemoryTransactionStore();
+ const adapters=createEscrowAdapters({authorizeTransaction:async()=>true,provider,...config,signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,transactions,confirmations:1,validateArtifact:async()=>true,...options});
+ const w=createWorkflow({store:options.workflowStore||createMemoryStore(),adapters,transitions:escrowTransitions});
  await w.create({id,participants},'buyer');
  let j=await w.act(id,'quote',{terms},{actor:'worker',idempotencyKey:'quote'});
  const acceptance={agreement_hash:j.agreement.hash,revision:1};
@@ -116,7 +117,7 @@ test('real EVM: journal recovers crash after broadcast without new transaction o
  await (await token.approve(config.contractAddress,100n)).wait();
  let crash=true,broadcasts=0;
  const broken=new Proxy(provider,{get(target,key){if(key==='broadcastTransaction')return async raw=>{broadcasts++;const tx=await target.broadcastTransaction(raw);if(crash){crash=false;throw Error('crash after send');}return tx;};if(key==='getTransaction')return async()=>{throw Error('RPC outage');};const value=target[key];return typeof value==='function'?value.bind(target):value;}});
- const adapters=createEscrowAdapters({provider:broken,...config,signerFor:async a=>wallets[actors[a]],addressFor:async a=>wallets[actors[a]].address,transactions:f.transactions,confirmations:1,validateArtifact:async()=>true});
+ const adapters=createEscrowAdapters({authorizeTransaction:async()=>true,provider:broken,...config,signerFor:async a=>wallets[actors[a]],addressFor:async a=>wallets[actors[a]].address,transactions:f.transactions,confirmations:1,validateArtifact:async()=>true});
  // Direct adapter context uses an already persisted workflow intent to exercise the crash window.
  const job=await f.w.get(f.id,'buyer');
  const ctx={job,input:{worker_signature:f.signature},operation:{id:'recovery-operation',actor:'buyer'}};
@@ -147,4 +148,50 @@ test('real EVM: work gate rejects changed on-chain agreement fields',async()=>{
  job.agreement.terms.escrow.amount='99';job.agreement.hash=require('../src/workflow.cjs').hashAgreement(job.agreement.terms);
  await assert.rejects(f.adapters.start.execute({job,input:{},operation:{id:'mismatch-start',actor:'worker'}}),/on-chain .* mismatch/);
  await advance(101);await f.act('refund','buyer');
+});
+test('real EVM: mandatory signing policy blocks all approval/funding signatures',async()=>{
+ const f=await fixture('sign-policy',{authorizeTransaction:async()=>false});const before=await token.balanceOf(config.contractAddress);
+ const j=await f.act('fund','buyer',{worker_signature:f.signature});assert.equal(j.state,'accepted');assert.equal(j.pending,null);assert.equal((await f.transactions.list()).length,0);assert.equal(await token.balanceOf(config.contractAddress),before);
+});
+test('real EVM: fresh receipts validate chain evidence and reject tampered cached amount',async()=>{
+ const {createEvidenceRevalidator}=require('../src/escrow/index.cjs');const f=await fixture('fresh');const funded=await fund(f);
+ const validate=createEvidenceRevalidator({provider,...config,confirmations:1});const e=funded.evidence[0].evidence;
+ assert.equal((await validate(funded,e)).status,'valid');assert.equal((await validate(funded,{...e,amount:'99'})).status,'invalid');
+ await advance(101);await f.act('refund','buyer');
+});
+test('real EVM: ERC1271 worker wallet consent and externally signed submission are supported',async()=>{
+ const source=`pragma solidity ^0.8.24; contract Worker { address immutable owner;constructor(address o){owner=o;}function isValidSignature(bytes32 h,bytes calldata sig) external view returns(bytes4){(bytes32 r,bytes32 s,uint8 v)=abi.decode(sig,(bytes32,bytes32,uint8));return ecrecover(h,v,r,s)==owner?bytes4(0x1626ba7e):bytes4(0xffffffff);}function execute(address to,bytes calldata data) external {require(msg.sender==owner);(bool ok,)=to.call(data);require(ok);}}`;
+ // Encode consent as (r,s,v) for this test wallet's custom ERC1271 signature format.
+ const out=JSON.parse(solc.compile(JSON.stringify({language:'Solidity',sources:{'W.sol':{content:source}},settings:{evmVersion:'shanghai',outputSelection:{'*':{'*':['abi','evm.bytecode.object']}}}}))).contracts['W.sol'].Worker;
+ const smart=await new ContractFactory(out.abi,out.evm.bytecode.object,wallets[1]).deploy(wallets[1].address);await smart.waitForDeployment();const address=await smart.getAddress();
+ const f=await fixture('smart-worker',{escrowOverrides:{worker:address},addressFor:async actor=>actor==='worker'?address:wallets[actors[actor]].address});
+ const {Signature,AbiCoder}=require('ethers'),sig=Signature.from(f.signature);f.signature=AbiCoder.defaultAbiCoder().encode(['bytes32','bytes32','uint8'],[sig.r,sig.s,sig.v]);await fund(f);await f.act('start','worker');
+ const resultHash=hash('smart account result');const tx=await smart.execute(config.contractAddress,escrow.interface.encodeFunctionData('submit',[f.consent.value.jobId,resultHash]));await tx.wait();
+ const j=await f.act('submit','worker',{result_hash:resultHash,transaction_hash:tx.hash});assert.equal(j.state,'submitted');
+ await f.act('verify','verifier');await f.act('release','verifier');
+});
+test('real EVM: managed remote signer enforces concrete delegation and validates returned key',async()=>{
+ const {createManagedSigner,createDelegationAuthorizer}=require('../src/escrow/index.cjs');const selector=escrow.interface.getFunction('refundExpired').selector;
+ const allow=createDelegationAuthorizer({expiresAt:Math.floor(Date.now()/1000)+60,chainIds:[31337],contracts:[config.contractAddress],selectors:[selector],maxGasLimit:'1000000',maxFeePerGas:'100000000000'});
+ const managed=createManagedSigner({address:wallets[0].address,provider,authorize:allow,signDigest:async digest=>wallets[0].signingKey.sign(digest).serialized});
+ const tx={to:config.contractAddress,data:escrow.interface.encodeFunctionData('refundExpired',[hash('none')]),nonce:0,chainId:31337,type:2,maxFeePerGas:1000000000n,maxPriorityFeePerGas:1n,gasLimit:100000n};
+ assert.equal(require('ethers').Transaction.from(await managed.signTransaction(tx)).from,wallets[0].address);
+ await assert.rejects(managed.signTransaction({...tx,to:wallets[4].address}));await assert.rejects(managed.signMessage('unscoped'));
+});
+test('real EVM application journey uses durable SQLite, credential auth, HTTP actions and fresh PDF receipts',async()=>{
+ const {createSqliteStorage}=require('../src/storage/index.cjs');const {createApplicationHandler,createSpendingAuthorizer}=require('../src/operations/index.cjs');const {createEvidenceRevalidator}=require('../src/escrow/index.cjs');
+ const {createAuthority,createCredentialAuthenticator}=require('../src/authority/index.cjs');const {generateKeyPairSync,sign}=require('node:crypto');
+ const s=createSqliteStorage({filename:':memory:'});try{
+ const keys=()=>{const x=generateKeyPairSync('ed25519');return {privateKey:x.privateKey,publicKey:x.publicKey.export({type:'spki',format:'pem'})};};
+ const root=keys(),org=keys();const authority=createAuthority({issuer:'integration',audience:'app',privateKey:root.privateKey,kv:s.kv});await authority.registerOrganization({id:'org',name:'Test',publicKey:org.publicKey});const credentials={};
+ for(const actor of ['buyer','worker','verifier','arb']){const key=keys(),enrollment={organization:'org',agentId:actor,publicKey:key.publicKey,scopes:['workflow']};await authority.registerAgent({...enrollment,organizationSignature:sign(null,Buffer.from(JSON.stringify(authority.registration(enrollment))),org.privateKey).toString('base64url')});const c=await authority.challenge(actor);credentials[actor]=(await authority.exchange({challengeId:c.id,signature:sign(null,Buffer.from(JSON.stringify(c)),key.privateKey).toString('base64url')})).credential;}
+ const authorizeTransaction=createSpendingAuthorizer({spending:s.spending,limitsFor:async()=>({perTransaction:'100',daily:'100',total:'100'}),authorize:async()=>true});
+ const f=await fixture('http-app',{workflowStore:s.jobs,transactions:s.transactions,authorizeTransaction});
+ const {createEscrowApplication}=require('../src/operations/index.cjs');const app=createEscrowApplication({storage:s,authority,escrows:[{provider,...config,confirmations:1}],signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,limitsFor:async()=>({perTransaction:'100',daily:'100',total:'100'}),approveSigning:async()=>true,validateArtifact:async()=>true});const handler=app.handler;
+ async function action(name,actor,input={}){let data;for(let i=0;i<8;i++){const response=await handler(new Request('https://app.test/api/a423/jobs/http-app/actions',{method:'POST',headers:{authorization:'Bearer '+credentials[actor],'content-type':'application/json','idempotency-key':name},body:JSON.stringify({action:name,input})}));data=await response.json();assert.equal(response.status,200,JSON.stringify(data));if(!data.job.pending)return data.job;await provider.send('evm_mine',[]);}throw Error('pending');}
+ assert.equal((await action('fund','buyer',{worker_signature:f.signature})).state,'funded');await action('start','worker');await action('submit','worker',{result_hash:hash('http bytes')});await action('verify','verifier');await action('release','verifier');
+ const headers={authorization:'Bearer '+credentials.buyer};const state=await(await handler(new Request('https://app.test/api/state',{headers}))).json();assert.equal(state.a423.jobs[0].state,'paid');assert.ok(state.a423.wallet_transactions.length>=4);
+ const pdf=await handler(new Request('https://app.test/api/a423-receipts/http-app.pdf',{headers}));assert.equal(pdf.status,200);assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0,4).toString(),'%PDF');
+ const consent=await handler(new Request('https://app.test/api/a423-worker-consent/http-app',{headers}));assert.equal(consent.status,403);
+ }finally{s.close();}
 });

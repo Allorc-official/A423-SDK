@@ -26,6 +26,7 @@ export interface WorkflowOptions {
   /** Return true to allow; authenticated actor ID must be supplied by your application. */
   authorize?(context: { job: WorkflowJob; action: string; actor: string; input: Json }): boolean | Promise<boolean>;
   /** Throw to reject application-specific terms. */
+  validateEvidence?(context: {job: WorkflowJob;action: string;evidence: {[key: string]: Json}}): void | Promise<void>;
   validateTerms?(terms: { [key: string]: Json }): void | Promise<void>;
   /** Explicit overrides replace the full rule; application is responsible for its invariants. */
   transitions?: Record<string, Transition>;
@@ -33,7 +34,9 @@ export interface WorkflowOptions {
 export interface Workflow {
   create(input: { id?: string; participants: WorkflowJob['participants']; metadata?: Json }, actor: string): Promise<WorkflowJob>;
   get(id: string, actor: string): Promise<WorkflowJob>;
+  assertSafe(id: string, actor: string): Promise<WorkflowJob>;
   act(id: string, action: string, input: Json, options: { actor: string; idempotencyKey: string }): Promise<WorkflowJob>;
+  resume(id: string, actor: string): Promise<WorkflowJob>;
   reconcile(id: string, actor: string): Promise<WorkflowJob>;
   receipts(id: string, actor: string): Promise<Pick<WorkflowJob, 'protocol' | 'state' | 'agreement' | 'submission' | 'evidence' | 'events' | 'pending'> & { job_id: string }>;
 }

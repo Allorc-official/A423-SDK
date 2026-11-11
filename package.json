@@ -1,6 +1,6 @@
 {
   "name": "@allorc/a423-sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Experimental Next.js-friendly agent job SDK with typed HTTP client and pluggable storage, authentication and settlement",
   "license": "MIT",
   "type": "commonjs",
@@ -26,6 +26,21 @@
         "types": "./src/escrow/index.d.ts",
         "default": "./src/escrow/index.cjs"
       }
+    },
+    "./storage": {
+      "types": "./src/storage/index.d.ts",
+      "import": "./src/storage/index.mjs",
+      "require": "./src/storage/index.cjs"
+    },
+    "./authority": {
+      "types": "./src/authority/index.d.ts",
+      "import": "./src/authority/index.mjs",
+      "require": "./src/authority/index.cjs"
+    },
+    "./operations": {
+      "types": "./src/operations/index.d.ts",
+      "import": "./src/operations/index.mjs",
+      "require": "./src/operations/index.cjs"
     }
   },
   "files": [
@@ -46,17 +61,27 @@
     "src/escrow",
     "contracts/A423Escrow.sol",
     "ESCROW.md",
-    "NOTICE"
+    "NOTICE",
+    "src/storage",
+    "src/authority",
+    "src/operations",
+    "OPERATIONS.md",
+    "examples/operations-server.mjs",
+    "scripts/deploy-escrow.mjs",
+    "contracts/standard-input.json",
+    "examples/operations-dashboard.html",
+    "LEGACY.md",
+    "scripts/operations-worker.mjs"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "scripts": {
     "test": "node --test test/*.test.cjs",
     "pack:check": "npm pack --dry-run --ignore-scripts",
     "prepublishOnly": "npm run typecheck && npm test",
     "build:escrow": "node scripts/compile-escrow.cjs",
-    "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --lib es2022,dom test/workflow-types.mts test/escrow-types.mts test/escrow-types.cts",
+    "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --lib es2022,dom test/workflow-types.mts test/escrow-types.mts test/escrow-types.cts test/operations-types.mts",
     "pretest": "npm run build:escrow"
   },
   "publishConfig": {
@@ -78,10 +103,14 @@
     "url": "https://github.com/Allorc-official/A423-SDK/issues"
   },
   "peerDependencies": {
-    "ethers": "^6.15.0"
+    "ethers": "^6.15.0",
+    "pdf-lib": "^1.17.1"
   },
   "peerDependenciesMeta": {
     "ethers": {
+      "optional": true
+    },
+    "pdf-lib": {
       "optional": true
     }
   },
@@ -89,6 +118,7 @@
     "@openzeppelin/contracts": "5.4.0",
     "ethers": "6.15.0",
     "ganache": "7.9.2",
+    "pdf-lib": "1.17.1",
     "solc": "0.8.30",
     "typescript": "5.9.3"
   }

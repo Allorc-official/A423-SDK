@@ -5,3 +5,11 @@ coverage/
 *.pem
 *.key
 .next/
+
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+a423-deployment.json

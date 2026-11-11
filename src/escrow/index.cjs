@@ -31,10 +31,13 @@ function createMemoryTransactionStore() {
   return {
     async get(id){return records.has(id)?structuredClone(records.get(id)):null;},
     async create(id,record){if(records.has(id))return false;records.set(id,structuredClone(record));return true;},
+    async list(){return [...records].map(([id,record])=>({id,...structuredClone(record)}));},
+    async appendReplacement(id,expectedHash,replacement){const record=records.get(id);check(record&&(record.replacements?.at(-1)?.hash||record.hash)===expectedHash,'Replacement conflict');record.replacements=[...(record.replacements||[]),structuredClone(replacement)];},
     async reserveNonce(scope,minimum,operationId){const key=scope+':'+operationId;if(reservations.has(key))return reservations.get(key);const nonce=Math.max(minimum,nonces.get(scope)||0);nonces.set(scope,nonce+1);reservations.set(key,nonce);return nonce;}
   };
 }
-function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,signerFor,addressFor,transactions,confirmations,validateArtifact}={}) {
+function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,signerFor,addressFor,transactions,confirmations,validateArtifact,authorizeTransaction}={}) {
+  check(typeof authorizeTransaction==='function','authorizeTransaction is required before any signing or broadcast');
   check(provider && typeof signerFor==='function' && typeof addressFor==='function','provider, signerFor and addressFor required');
   check(Number.isSafeInteger(chainId)&&chainId>0 && Number.isSafeInteger(confirmations)&&confirmations>0,'explicit chain ID and positive confirmations required');
   check(transactions && ['get','create','reserveNonce'].every(k=>typeof transactions[k]==='function'),'durable transaction journal required');
@@ -63,6 +66,7 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
     let record=await transactions.get(id);
     if(!record && reconcile)return {status:'pending',reference:id};
     if(!record) {
+      if(await authorizeTransaction({job:structuredClone(ctx.job),operation:structuredClone(ctx.operation),actor:ctx.operation.actor,step:suffix,to:getAddress(to),data,phase:'sign'})!==true)return {status:'rejected',reason:'Signing policy denied before signing'};
       const signer=await signerFor(ctx.operation.actor);
       const address=getAddress(await signer.getAddress());
       check(address===getAddress(await addressFor(ctx.operation.actor)),'signer ownership mismatch');
@@ -75,17 +79,20 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
       const raw=await signer.signTransaction(request);
       const tx=Transaction.from(raw);
       check(tx.from===address && Number(tx.chainId)===chainId && tx.to===getAddress(to) && tx.data===data && tx.nonce===nonce && tx.value===0n,'signed transaction mismatch');
-      await transactions.create(id,{hash:tx.hash,raw,to:getAddress(to),data,from:address});
+      await transactions.create(id,{hash:tx.hash,raw,to:getAddress(to),data,from:address,created_at:new Date().toISOString()});
       record=await transactions.get(id);
     }
     check(record.to===getAddress(to) && record.data===data && record.from===getAddress(await addressFor(ctx.operation.actor)),'journal request mismatch');
-    let r=await receipt(record.hash);
+    const attempts=[record,...(record.replacements||[])];
+    let active=attempts.at(-1),r=null;
+    for(const attempt of attempts){const observed=await receipt(attempt.hash);if(observed){r=observed;active=attempt;break;}}
     if(!r && !reconcile) {
-      try {await provider.broadcastTransaction(record.raw);} catch(err) {if(!await provider.getTransaction(record.hash))throw err;}
-      r=await receipt(record.hash);
+      check(await authorizeTransaction({job:structuredClone(ctx.job),operation:structuredClone(ctx.operation),actor:ctx.operation.actor,step:suffix,to:getAddress(to),data,phase:'broadcast'})===true,'broadcast policy denied');
+      try {await provider.broadcastTransaction(active.raw);} catch(err) {if(!await provider.getTransaction(active.hash))throw err;}
+      r=await receipt(active.hash);
     }
-    if(!r)return {status:'pending',reference:record.hash};
-    if(r.status!==1)return {status:'rejected',reason:'Transaction reverted',reference:record.hash};
+    if(!r)return {status:'pending',reference:active.hash};
+    if(r.status!==1)return {status:'rejected',reason:'Transaction reverted',reference:active.hash};
     return {receipt:r};
   }
   async function observe(ctx,t,suffix,method,args,eventName,validate,reconcile) {
@@ -101,7 +108,7 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
     const event=logs.find(log=>log?.name===eventName && log.args.jobId===t.jobId);
     check(event,'matching '+eventName+' event missing');
     const snapshot=await contract.getJob(t.jobId,{blockTag:r.blockNumber});match(snapshot,t);validate(snapshot,event);
-    return {status:'confirmed',evidence:{chain_id:String(chainId),contract:config.contractAddress,token:config.tokenAddress,job_id:t.jobId,agreement_hash:t.agreementHash,transaction_hash:r.hash,block_number:r.blockNumber,block_hash:r.blockHash,confirmations,event:eventName,amount:t.amount.toString(),payer:t.payer,worker:t.worker,verifier:t.verifier,arbitrator:t.arbitrator,result_hash:snapshot.resultHash,worker_paid:snapshot.workerPaid.toString(),state:Number(snapshot.state),observed_at:new Date().toISOString()}};
+    return {status:'confirmed',evidence:require('../operations/index.cjs').validateEscrowEvidence({chain_id:String(chainId),contract:config.contractAddress,token:config.tokenAddress,job_id:t.jobId,agreement_hash:t.agreementHash,transaction_hash:r.hash,block_number:r.blockNumber,block_hash:r.blockHash,confirmations,event:eventName,settlement_reason:eventName==='Settled'?Number(event.args.reason):null,reason_hash:eventName==='Disputed'?event.args.reasonHash:null,amount:t.amount.toString(),payer:t.payer,worker:t.worker,verifier:t.verifier,arbitrator:t.arbitrator,result_hash:snapshot.resultHash,worker_paid:snapshot.workerPaid.toString(),state:Number(snapshot.state),observed_at:new Date().toISOString()})};
   }
   function adapter(run){return {execute:ctx=>run(ctx,false),reconcile:ctx=>run(ctx,true)};}
   const state=(s,n)=>check(Number(s.state)===n,'unexpected escrow state');
@@ -113,7 +120,11 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
       if(typeof ctx.input.worker_signature!=='string')return {status:'rejected',reason:'worker_signature required'};
       // Consent is checked locally as well as by the contract before moving tokens.
       const {verifyTypedData}=require('ethers');const c=workerConsent(ctx.job,config);
-      try {if(getAddress(verifyTypedData(c.domain,c.types,c.value,ctx.input.worker_signature))!==t.worker)return {status:'rejected',reason:'Invalid worker consent'};} catch {return {status:'rejected',reason:'Invalid worker consent'};}
+      const digest=TypedDataEncoder.hash(c.domain,c.types,c.value);
+      if(await provider.getCode(t.worker)!=='0x'){
+        const smart=new Contract(t.worker,['function isValidSignature(bytes32,bytes) view returns(bytes4)'],provider);
+        try {if(await smart.isValidSignature(digest,ctx.input.worker_signature)!=='0x1626ba7e')return {status:'rejected',reason:'Invalid smart-account worker consent'};}catch(err){if(err.code==='CALL_EXCEPTION')return {status:'rejected',reason:'Smart-account consent reverted'};throw err;}
+      }else {try {if(getAddress(verifyTypedData(c.domain,c.types,c.value,ctx.input.worker_signature))!==t.worker)return {status:'rejected',reason:'Invalid worker consent'};} catch {return {status:'rejected',reason:'Invalid worker consent'};}}
       // Never send further approvals if the funding transaction already exists in the journal.
       if(!ctx.input.transaction_hash && !await transactions.get(ctx.operation.id+':fund')) {
         let allowance=await token.allowance(t.payer,config.contractAddress);
@@ -135,3 +146,5 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
   };
 }
 module.exports={createEscrowAdapters,createMemoryTransactionStore,workerConsent,escrowTerms,escrowTransitions:transitions,ESCROW_ABI:ABI,ESCROW_BYTECODE:artifact.bytecode};
+
+Object.assign(module.exports,require('./services.cjs'));
