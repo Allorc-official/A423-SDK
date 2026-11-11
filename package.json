@@ -1,6 +1,6 @@
 {
   "name": "@allorc/a423-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Experimental Next.js-friendly agent job SDK with typed HTTP client and pluggable storage, authentication and settlement",
   "license": "MIT",
   "type": "commonjs",
@@ -11,6 +11,11 @@
       "types": "./src/index.d.ts",
       "import": "./src/index.mjs",
       "require": "./src/index.cjs"
+    },
+    "./workflow": {
+      "types": "./src/workflow.d.ts",
+      "import": "./src/workflow.mjs",
+      "require": "./src/workflow.cjs"
     }
   },
   "files": [
@@ -22,7 +27,12 @@
     "examples/nextjs/app/api/a423/*/route.ts",
     "README.md",
     "LICENSE",
-    "SECURITY.md"
+    "SECURITY.md",
+    "src/workflow.cjs",
+    "src/workflow.mjs",
+    "src/workflow.d.ts",
+    "INTEGRATION.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"

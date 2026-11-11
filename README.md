@@ -1,3 +1,107 @@
+# Configurable workflows in 0.2.0
+
+The new `@allorc/a423-sdk/workflow` entry point provides middleware for agent job lifecycles. It supports different task types and payment systems through application-supplied policies and adapters. It does not assume a particular blockchain, token, wallet, artifact format, database or AI framework. This is experimental software with a reference lifecycle; it does not promise every possible business workflow.
+
+The original root exports remain compatible. Choose the workflow entry point for the full lifecycle; do not mix its records with the original root API. See [integration and migration instructions](./INTEGRATION.md).
+
+```ts
+import { createWorkflow, createWorkflowHandler } from '@allorc/a423-sdk/workflow';
+
+const workflow = createWorkflow({
+  store: durableWorkflowStore,
+  adapters: applicationAdapters,
+  validateTerms: validateYourTerms,
+  authorize: checkYourPolicy,
+});
+const handler = createWorkflowHandler({ workflow, authenticate: authenticateRequest });
+// app/api/a423/[...path]/route.ts
+export const runtime = 'nodejs';
+export { handler as GET, handler as POST };
+```
+
+The names `durableWorkflowStore`, `applicationAdapters`, `validateYourTerms`, `checkYourPolicy` and `authenticateRequest` are application implementations, not SDK exports. Configure them once in a server module and import the handler into your route.
+
+## Workflow coverage
+
+| Action | From | Default role | Result | Required adapter |
+|---|---|---|---|---|
+| create | — | requester | draft | none |
+| quote | draft / quoted / accepted | requester or worker | quoted, acceptances reset | none |
+| accept | quoted | requester and worker separately | accepted after both | none |
+| fund | accepted | requester | funded | fund |
+| start | funded | worker | running | start (funding/work gate) |
+| submit | running | worker | submitted | submit |
+| verify | submitted | verifier | verified | verify |
+| release | verified | verifier | paid | release |
+| refund | funded / running | requester | refunded | refund |
+| cancel | draft / quoted / accepted | requester | cancelled | none |
+| expire | draft / quoted / accepted | requester or worker | expired | expire |
+| dispute | submitted / verified | any of the three parties | disputed | none |
+| resolve | disputed | verifier | resolved | resolve |
+
+`resolved` records a completed resolution process; it does not mean paid or refunded. The resolution adapter must record its actual outcome in evidence. Refund eligibility, quote expiry, deadlines, spending limits, asset rules and verification semantics belong in application policies/adapters. There is no automatic timer. A scheduler calls the API using an authenticated participant or an explicitly configured scheduler role.
+
+### Terms and acceptance
+
+Use JSON terms for your domain: task specification, price, asset, raw amount, deadline, wallet addresses, verifier policy and artifact expectations. Put every term you want committed into this object, including parties and settlement configuration where relevant. The SDK does not invent or validate those domain fields; `validateTerms` should throw on invalid terms. Use decimal strings for raw token amounts, not floating point or JSON bigint.
+
+The SDK hashes sorted-key canonical JSON with SHA-256 (array order preserved, no whitespace). Hash inputs must be plain JSON; avoid cyclic structures and sparse arrays. This is the SDK's own format, not a claim of RFC 8785 compatibility. Names and IDs are case-sensitive. A quote stores revision, terms, hash and acceptances. Accept requires both `agreement_hash` and `revision`; editing a quote clears acceptance. Terms cannot be revised after funding begins under the default rules. Hashes establish integrity, not caller identity or legal consent.
+
+### Adapter contract and recovery
+
+Each effect adapter is either an async function or `{ execute, reconcile }`. It receives `{ job, input, operation }` and returns:
+
+```js
+{ status: 'pending', reference: 'provider-operation-reference' }
+{ status: 'confirmed', evidence: { /* domain-specific verified observations */ } }
+{ status: 'rejected', reason: 'definitive rejection' }
+```
+
+Confirmed results require an evidence object. The SDK trusts the adapter's verdict; it cannot independently establish payment, artifact quality or chain finality. An arbitrary reference is not payment proof. Chain adapters should compare configured chain/contract, job ID, amount, token, participants, deadline and commitments against the accepted terms, plus relevant successful transaction events and the chosen finality policy. `start` must recheck eligibility before work is dispatched.
+
+The SDK atomically stores a pending operation before invoking an effect. Its `operation.id` is stable across retries: use it as the provider idempotency key. **Adapters must durably deduplicate effects, including concurrent calls.** Compare-and-set does not make an external payment exactly-once. If execution throws or returns an invalid result, pending remains; inspect/reconcile it. A pending result retains its observation. A rejected result clears pending without advancing state; repeat the same action key returns the stored job, so use a new key only after a definitive rejection and a deliberate new attempt.
+
+`reconcile(id, actor)` calls only the pending adapter's `reconcile`, never its execute method. That implementation should inspect known provider operations, not blindly repeat a transaction. Supply reconciliation for every external effect. Reuse the same adapter configuration and transitions across restarts. Reconciliation can record additional pending observations. No other action runs while an operation remains pending. If a final database save fails, recovery relies on the same persisted operation and provider key.
+
+The SDK does not run agents or background queues. Persist intent and schedule work in adapters; use a durable worker to submit actual output. Do not mark work submitted merely because a worker was queued. Custom transitions can add milestones, rejection/revision loops, manual review, nonpayment completion, or alternative arbitration. Override whole rules with `{ from, roles, to, effect }`; applications assume responsibility for the resulting invariants. Effect adapters must be trusted server code.
+
+### Storage, permissions and receipts
+
+A workflow store implements `get`, atomic insert-if-absent `create`, and atomic version-checked `compareAndSet`. Persist the entire record (state, pending operation, evidence, events, idempotency history) atomically. Use a separate table/namespace from legacy records. The root `createMemoryStore()` also works structurally at runtime for development, but is not durable or suitable for distributed deployment; a typed workflow store should implement the interface from the workflow entry point.
+
+The handler requires authentication. It obtains actor identity from your callback, never from action bodies. Default role checks always run; `authorize` adds application policy and must return exactly true. Creation requires requester authentication, and requester must differ from worker. The verifier may be the requester or a separate participant. Authentication, wallet/key custody, identity-to-wallet binding and proof of ownership remain application responsibilities. `@allorc/identity` only derives public identifiers.
+
+Receipts are JSON snapshots of agreement, submission, stored adapter evidence, events and pending state. They are not freshly queried chain proofs or signed attestations. Render PDFs separately, and revalidate provider evidence if fresh verification is required. Protect credentials and never put secrets in terms, evidence, metadata or events: all participants can read these fields. Records/events grow over time; production storage should enforce application quotas. The HTTP client limits responses to 1 MiB.
+
+### HTTP and client
+
+| Method | Path beneath `/api/a423` | Body |
+|---|---|---|
+| POST | `/jobs` | `{ id, participants, metadata? }` |
+| GET | `/jobs/:id` | — |
+| POST | `/jobs/:id/actions` | `{ action, input }` plus `Idempotency-Key` |
+| POST | `/jobs/:id/reconcile` | `{}` |
+| GET | `/jobs/:id/receipts` | — |
+
+The handler uses standard Web Request/Response, bounded streaming JSON (64 KiB default), explicit errors, and no background HTTP work. IDs and idempotency keys use 1–128 ASCII letters/digits/underscores/hyphens. Create with a stable application-assigned ID; duplicate creation returns conflict, then retrieve and compare the existing record. Every action needs an actor-scoped key; reusing it with different input fails. Transient conflicts should reload and retry using the same key. Authentication callbacks must inspect headers/cookies or a cloned request if they need the body.
+
+```ts
+import { createWorkflowClient } from '@allorc/a423-sdk/workflow';
+const client = createWorkflowClient({
+  baseUrl: 'https://your-app.example/api/a423',
+  headers: () => ({ Authorization: `Bearer ${serverCredential}` }),
+});
+const quote = await client.act(jobId, 'quote', { terms }, { idempotencyKey: 'quote_1' });
+await client.act(jobId, 'accept', {
+  agreement_hash: quote.agreement!.hash,
+  revision: quote.agreement!.revision,
+}, { idempotencyKey: 'accept_1' });
+```
+
+Each participant needs its own credentials. The client does not automatically retry. Default timeout is 30 seconds; adapters should return pending quickly for long operations. Use TLS and appropriate CSRF protection for cookie-authenticated mutations.
+
+## Original 0.1 API documentation
+
 # @allorc/a423-sdk
 
 One experimental package for exposing an agent job API from a Next.js App Router application. Configure a handler, export it from a catch-all route, and use the typed client to offer, accept, submit and approve work.
