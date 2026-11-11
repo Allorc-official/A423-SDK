@@ -1,0 +1,11 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const solc = require('solc');
+const root = path.resolve(__dirname, '..');
+const source = fs.readFileSync(path.join(root, 'contracts/A423Escrow.sol'), 'utf8');
+const input = { language: 'Solidity', sources: { 'A423Escrow.sol': {content:source} }, settings: { optimizer:{enabled:true,runs:200}, evmVersion:'shanghai', outputSelection:{'*':{'*':['abi','evm.bytecode.object']}} } };
+const result=JSON.parse(solc.compile(JSON.stringify(input),{import:p=>{try{return {contents:fs.readFileSync(require.resolve(p,{paths:[root]}),'utf8')};}catch{return {error:'Import not found: '+p};}}}));
+for(const error of result.errors||[]) if(error.severity==='error') throw Error(error.formattedMessage);
+const contract=result.contracts['A423Escrow.sol'].A423Escrow;
+fs.writeFileSync(path.join(root,'src/escrow/artifact.json'),JSON.stringify({compiler:solc.version(),abi:contract.abi,bytecode:'0x'+contract.evm.bytecode.object},null,2)+'\n');
+console.log('Compiled A423Escrow with '+solc.version());

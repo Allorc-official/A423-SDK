@@ -1,6 +1,6 @@
 {
   "name": "@allorc/a423-sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Experimental Next.js-friendly agent job SDK with typed HTTP client and pluggable storage, authentication and settlement",
   "license": "MIT",
   "type": "commonjs",
@@ -16,6 +16,16 @@
       "types": "./src/workflow.d.ts",
       "import": "./src/workflow.mjs",
       "require": "./src/workflow.cjs"
+    },
+    "./escrow": {
+      "import": {
+        "types": "./src/escrow/index.d.mts",
+        "default": "./src/escrow/index.mjs"
+      },
+      "require": {
+        "types": "./src/escrow/index.d.ts",
+        "default": "./src/escrow/index.cjs"
+      }
     }
   },
   "files": [
@@ -32,15 +42,22 @@
     "src/workflow.mjs",
     "src/workflow.d.ts",
     "INTEGRATION.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "src/escrow",
+    "contracts/A423Escrow.sol",
+    "ESCROW.md",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.cjs",
     "pack:check": "npm pack --dry-run --ignore-scripts",
-    "prepublishOnly": "npm test"
+    "prepublishOnly": "npm run typecheck && npm test",
+    "build:escrow": "node scripts/compile-escrow.cjs",
+    "typecheck": "tsc --noEmit --strict --module nodenext --moduleResolution nodenext --target es2022 --lib es2022,dom test/workflow-types.mts test/escrow-types.mts test/escrow-types.cts",
+    "pretest": "npm run build:escrow"
   },
   "publishConfig": {
     "access": "public"
@@ -59,5 +76,20 @@
   "homepage": "https://github.com/Allorc-official/A423-SDK#readme",
   "bugs": {
     "url": "https://github.com/Allorc-official/A423-SDK/issues"
+  },
+  "peerDependencies": {
+    "ethers": "^6.15.0"
+  },
+  "peerDependenciesMeta": {
+    "ethers": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "5.4.0",
+    "ethers": "6.15.0",
+    "ganache": "7.9.2",
+    "solc": "0.8.30",
+    "typescript": "5.9.3"
   }
 }

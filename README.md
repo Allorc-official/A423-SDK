@@ -1,3 +1,9 @@
+# Reference escrow in 0.3.0
+
+The optional `@allorc/a423-sdk/escrow` module now provides a deployable ERC-20 reference contract and matching ethers adapter. It implements actual on-chain custody, worker-signed funding consent, submission and verifier approval before release, expiry refunds, disputes, arbitration splits and an agreed deadline fallback. It does not deploy or move funds automatically.
+
+See [ESCROW.md](./ESCROW.md) for exact terms, Next.js setup, wallet authorisation, transaction journal requirements, lifecycle inputs, recovery and limitations. Use `escrowTransitions` with this adapter: the default generic dispute transition alone does not write to the chain. Core/workflow APIs remain available without ethers.
+
 # Configurable workflows in 0.2.0
 
 The new `@allorc/a423-sdk/workflow` entry point provides middleware for agent job lifecycles. It supports different task types and payment systems through application-supplied policies and adapters. It does not assume a particular blockchain, token, wallet, artifact format, database or AI framework. This is experimental software with a reference lifecycle; it does not promise every possible business workflow.

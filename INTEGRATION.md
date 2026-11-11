@@ -3,10 +3,16 @@
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.2.0
+npm install @allorc/a423-sdk@0.3.0
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.
+
+## Reference escrow option
+
+Read `ESCROW.md` first. The package now includes a concrete `/escrow` adapter plus `ESCROW_ABI`/`ESCROW_BYTECODE` and Solidity source. This contract differs from the old MVP contract: it requires EIP-712 worker consent, verifier approval, explicit arbitration and timeout terms. Do not point this adapter at the old contract. Use a fresh local/testnet deployment for evaluation or write a separately tested legacy adapter.
+
+Use `createEscrowAdapters` and `escrowTransitions` when testing the reference path. Implement both the durable workflow store and protected transaction journal with atomic nonce reservation, map all four roles to trusted wallets, and supply artifact validation. Retain the reference lifecycle tests below. Deployment or real fund movement requires separate authorisation.
 
 ## Task
 
