@@ -27,7 +27,7 @@ export interface EscrowAdapterOptions extends EscrowConfiguration {
   confirmations: number;
   validateArtifact?(context: { job: WorkflowJob; resultHash: string }): Promise<boolean>;
 }
-export function createEscrowAdapters(options: EscrowAdapterOptions): Record<'fund'|'start'|'submit'|'verify'|'release'|'refund'|'dispute'|'resolve'|'timeout'|'propose_settlement'|'counter_settlement'|'accept_settlement', EscrowAdapter>;
+export function createEscrowAdapters(options: EscrowAdapterOptions): Record<'fund'|'start'|'submit'|'verify'|'release'|'refund'|'dispute'|'resolve'|'timeout'|'propose_settlement'|'counter_settlement'|'accept_settlement'|'approve_cancellation'|'execute_cancellation', EscrowAdapter>;
 export function createMemoryTransactionStore(): TransactionStore;
 export function escrowTerms(job: WorkflowJob, config: EscrowConfiguration): ContractTerms;
 export function workerConsent(job: WorkflowJob, config: EscrowConfiguration): {
@@ -49,3 +49,7 @@ export function createEscrowIndexer(options: {provider: Provider;chainId: number
 
 export function settlementProposal(job: WorkflowJob,input: {worker_amount: string;payer_amount?: string;expected_revision: number;expires_at: number;reason: string;claims?: import('../workflow.js').SettlementClaim[]}): import('../workflow.js').SettlementProposal;
 export function settlementConsent(job: WorkflowJob,configuration: EscrowConfiguration): {domain: {name: string;version: string;chainId: number;verifyingContract: string};types: Record<string,TypedDataField[]>;value: {jobId: string;agreementHash: string;escrowVersion: number;workerAmount: bigint;payerAmount: bigint;proposalHash: string;expiresAt: number}};
+
+export {createCancellationInstruction,validateCancellationInstruction} from '../workflow.js';
+export function cancellationCall(instruction: import('../workflow.js').CancellationInstruction): {functionName: 'settleByConsent';args: [ReturnType<typeof settlementConsent>['value'],string,string]};
+export function verifyCancellationAuthorization(job: WorkflowJob,instruction: import('../workflow.js').CancellationInstruction,options: EscrowConfiguration & {provider: Provider}): Promise<{valid: boolean;checked_block?: number;reason?: string}>;

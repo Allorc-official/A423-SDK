@@ -39,6 +39,9 @@ async function runMaintenanceOnce({workflow,store,actorFor,allowExecute=false,no
    const actor=await actorFor(job);if(!actor)continue;
    let result=job;
    if(job.pending){result=await workflow.reconcile(job.id,actor);if(result.pending&&allowExecute)result=await workflow.resume(job.id,actor);}
+   else if((job.subflows||[]).some(s=>s.kind==='cancellation'&&s.status==='accepted')&&allowExecute){
+     const subflow=job.subflows.find(s=>s.kind==='cancellation');result=await workflow.act(job.id,'execute_cancellation',{instruction_id:subflow.instruction.id},{actor,idempotencyKey:'cancel_forward_'+hash(JSON.stringify(subflow.instruction.id))});
+   }
    else if(job.agreement){const e=job.agreement.terms.escrow;const seconds=Math.floor(now/1000);let action;
     if(e&&(['funded','running'].includes(job.state)||(['settlement_negotiation','disputed'].includes(job.state)&&!job.submission))&&seconds>e.work_deadline)action='timeout';
     if(e&&['submitted','verified','disputed','settlement_negotiation'].includes(job.state)&&seconds>e.resolution_deadline)action='timeout';
@@ -104,3 +107,10 @@ module.exports.migrateUnfundedLegacy=migrateUnfundedLegacy;
 Object.assign(module.exports,require('./application.cjs'));
 
 Object.assign(module.exports,require('./factory.cjs'));
+
+async function freshCancellationReceipt({workflow,id,actor,revalidate}){
+ const job=await workflow.get(id,actor),receipt=await workflow.cancellationReceipt(id,actor);
+ require('../cancellation.cjs').validateCancellationReceipt(job,receipt);
+ const check=await revalidate(job,receipt.evidence);assert(check.status==='valid','Cancellation receipt evidence is not currently valid');return receipt;
+}
+module.exports.freshCancellationReceipt=freshCancellationReceipt;

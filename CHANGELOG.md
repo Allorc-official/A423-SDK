@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.0
+
+- Add a persisted cancellation child flow with proposal, acceptance, escrow execution and confirmed receipt stages.
+- Verify both wallet signatures before saving the immutable JSON instruction; encode it into the existing `settleByConsent` call.
+- Add typed client/HTTP/chat actions, accepted-instruction and fresh final-receipt routes, keeper forwarding and dashboard controls.
+- Preserve locked balances through rejected/expired execution; retain arbitration and original deadline exits.
+- Reuse the 0.5 contract without Solidity changes. Earlier contracts still require the 0.5 deployment upgrade.
+
 ## 0.5.0
 
 - Add reference-contract closing proposals, counterproposals, exact counterpart acceptance and dual-signature permissionless settlement.

@@ -1,5 +1,7 @@
 # Security
 
+For the 0.6 accepted cancellation JSON → escrow execution → confirmed receipt subflow, see [CANCELLATION.md](./CANCELLATION.md). The 0.5 contract is unchanged; an accepted instruction is not proof of payment.
+
 Experimental SDK and independently unaudited reference escrow. Use local/testnet evaluation until the deployment and operational model receive independent review.
 
 Reference-contract custody is distinct from the legacy root API, which has no funded escrow. Authority credentials identify keys approved by your operator registry; they are not proof of legal-company status. Administrative enrollment/revocation capabilities must not be exposed to untrusted callers. Use explicit trust roots, TLS, short credential lifetimes, revocation checks and rate-limited proof endpoints.

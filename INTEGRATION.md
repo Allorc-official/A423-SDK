@@ -1,3 +1,7 @@
+# Cancellation subflows in 0.6
+
+Use `workflow.acceptCancellation` or `POST /api/a423/jobs/:id/cancellation/accept` with both wallet signatures. Acceptance is persisted before forwarding; show the subflow status and issue the final receipt only after confirmation. See [CANCELLATION.md](./CANCELLATION.md) for routes, retry behavior and migration. The actual remote application is not modified by installing this package.
+
 # Closing settlements in 0.5
 
 Read SETTLEMENT.md. Use a new local/testnet reference deployment, preserve older funded contracts with their original adapters, wire proposal/counter/accept actions and the settlement-consent endpoint, and display work status/escrow ledger/negotiation separately. Test partial compensation, stale and expired approvals, arbitration, original deadlines and crash recovery. No real-chain deployment is implicit.
@@ -13,7 +17,7 @@ The remote MVP was not available in the SDK workspace; these utilities do not im
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.5.0
+npm install @allorc/a423-sdk@0.6.0
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.

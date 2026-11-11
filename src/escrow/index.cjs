@@ -6,6 +6,8 @@ const ABI = artifact.abi;
 const TOKEN_ABI = ['function allowance(address,address) view returns(uint256)','function approve(address,uint256) returns(bool)'];
 const TERMS_TYPES = { Terms: [ ['jobId','bytes32'],['payer','address'],['worker','address'],['verifier','address'],['arbitrator','address'],['amount','uint256'],['workDeadline','uint64'],['reviewDeadline','uint64'],['resolutionDeadline','uint64'],['timeoutWorkerBps','uint16'],['agreementHash','bytes32'] ].map(([name,type])=>({name,type})) };
 const transitions = {
+  approve_cancellation: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
+  execute_cancellation: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settled',effect:true},
   propose_settlement: {from:['funded','running','submitted','verified'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
   counter_settlement: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
   accept_settlement: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settled',effect:true},
@@ -128,6 +130,36 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
   }
   const proposeAdapter=adapter(async(ctx,r)=>{ctx.settlementActorAddress=getAddress(await addressFor(ctx.operation.actor));return propose(ctx,r);});
   return {
+    approve_cancellation:adapter(async ctx=>{
+      await context(ctx.job);const p=ctx.job.negotiation?.current;
+      if(!p||ctx.input.expected_revision!==p.escrow_version||ctx.input.proposal_hash!==p.proposal_hash)return {status:'rejected',reason:'Approve the exact current proposal'};
+      const {createCancellationInstruction,verifyCancellationAuthorization}=require('./cancellation.cjs');let instruction;
+      try{instruction=createCancellationInstruction(ctx.job,ctx.input);}catch(error){return {status:'rejected',reason:error.message};}
+      const verified=await verifyCancellationAuthorization(ctx.job,instruction,{provider,...config});
+      if(!verified.valid)return {status:'rejected',reason:verified.reason};
+      return {status:'confirmed',evidence:{kind:'a423.cancellation_acceptance.v1',instruction,checked_block:verified.checked_block,funds_moved:false}};
+    }),
+    execute_cancellation:adapter(async(ctx,r)=>{
+      const t=await context(ctx.job);const {getCancellationSubflow,validateCancellationInstruction}=require('../cancellation.cjs');
+      const instruction=getCancellationSubflow(ctx.job)?.instruction;
+      if(!instruction||ctx.input.instruction_id!==instruction.id)return {status:'rejected',reason:'Accepted cancellation instruction required'};
+      try{validateCancellationInstruction(ctx.job,instruction);}catch(error){return {status:'rejected',reason:error.message};}
+      const {verifyCancellationAuthorization,cancellationCall}=require('./cancellation.cjs');
+      if(!ctx.input.transaction_hash&&!await transactions.get(ctx.operation.id+':execute_cancellation')){
+        const verified=await verifyCancellationAuthorization(ctx.job,instruction,{provider,...config});if(!verified.valid)return {status:'rejected',reason:verified.reason};
+      }
+      const call=cancellationCall(instruction);
+      const result=await observe(ctx,t,'execute_cancellation',call.functionName,call.args,'Settled',(s,e)=>{
+        settled(s,e,t);check(Number(e.args.reason)===4&&e.args.workerAmount.toString()===instruction.worker.amount&&e.args.payerAmount.toString()===instruction.payer.amount&&Number(s.proposal.revision)===instruction.escrow_version&&s.proposal.proposalHash===instruction.proposal_hash,'Instruction allocation mismatch');
+      },r);
+      if(result.status==='confirmed'){
+        const receipt=await provider.getTransactionReceipt(result.evidence.transaction_hash);
+        const accepted=receipt.logs.filter(l=>getAddress(l.address)===config.contractAddress).map(l=>{try{return iface.parseLog(l);}catch{return null;}}).find(e=>e?.name==='SettlementAccepted'&&e.args.jobId===t.jobId);
+        check(accepted&&Number(accepted.args.revision)===instruction.escrow_version&&accepted.args.proposalHash===instruction.proposal_hash,'Instruction acceptance event missing');
+        result.evidence.instruction_id=instruction.id;
+      }
+      return result;
+    }),
     propose_settlement:proposeAdapter,
     counter_settlement:proposeAdapter,
     accept_settlement:adapter(async(ctx,r)=>{
@@ -180,4 +212,4 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
 }
 module.exports={createEscrowAdapters,createMemoryTransactionStore,workerConsent,escrowTerms,escrowTransitions:transitions,ESCROW_ABI:ABI,ESCROW_BYTECODE:artifact.bytecode};
 
-Object.assign(module.exports,require('./services.cjs'),require('./negotiation.cjs'));
+Object.assign(module.exports,require('./services.cjs'),require('./negotiation.cjs'),require('./cancellation.cjs'));

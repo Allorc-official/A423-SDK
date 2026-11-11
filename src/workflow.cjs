@@ -62,11 +62,13 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
     canonical(result);
     if (result.status === 'pending') {
       const next = copy(job); next.pending.observation = copy(result);
+      require('./cancellation.cjs').updateCancellationSubflow(job,next,{action:pending.action,actor:pending.actor,phase:'pending',evidence:result,at:stamp()});
       return save(job, next, pending.action + '.pending', pending.actor, result);
     }
     if (result.status === 'rejected') {
       const next = copy(job); next.pending = null;
       next.operations[pending.key] = { request_hash: pending.request_hash, status: 'rejected', result: copy(result) };
+      require('./cancellation.cjs').updateCancellationSubflow(job,next,{action:pending.action,actor:pending.actor,phase:'rejected',error:result.reason,at:stamp()});
       return save(job, next, pending.action + '.rejected', pending.actor, result);
     }
     if (!result.evidence || typeof result.evidence !== 'object' || Array.isArray(result.evidence)) error('INVALID_ADAPTER_RESULT', 'Confirmed effects require structured evidence', 502);
@@ -83,7 +85,12 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       next.negotiation={status:'open',origin_state:job.negotiation?.origin_state||job.state,current:record,history:[...(job.negotiation?.history||[]),record]};
       next.work_status='paused';eventData={...eventData,proposal:record};
     }
-    if(pending.action==='accept_settlement'){
+    if(pending.action==='approve_cancellation'){
+      const instruction=require('./cancellation.cjs').validateCancellationInstruction(job,result.evidence.instruction);
+      next.negotiation={...copy(job.negotiation),status:'accepted',acceptance_basis:'dual_wallet_signatures'};next.work_status='paused';
+      eventData={...eventData,instruction_id:instruction.id};
+    }
+    if(['accept_settlement','execute_cancellation'].includes(pending.action)){
       const p=job.negotiation?.current;
       if(!p || result.evidence.settlement_reason!==4 || result.evidence.worker_paid!==p.worker_amount || result.evidence.proposal_hash!==p.proposal_hash || result.evidence.escrow_version!==p.escrow_version)error('INVALID_ADAPTER_RESULT','Closing settlement evidence mismatch',502);
       next.negotiation={...copy(job.negotiation),status:'settled',accepted_by:pending.actor,settled_at:stamp()};next.work_status='stopped';
@@ -99,6 +106,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       const closed=[5,6,7].includes(e.state);
       next.escrow_ledger={funded_amount:e.amount,worker_paid:e.worker_paid,payer_refunded:closed?(BigInt(e.amount)-BigInt(e.worker_paid)).toString():'0',locked_amount:closed?'0':e.amount,escrow_version:e.escrow_version??0};
     }
+    require('./cancellation.cjs').updateCancellationSubflow(job,next,{action:pending.action,actor:pending.actor,phase:'confirmed',evidence:result.evidence,instruction:result.evidence.instruction,at:stamp()});
     return save(job, next, pending.action + '.confirmed', pending.actor, eventData);
   }
   async function execute(job, reconcile = false) {
@@ -110,7 +118,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
     const result = await fn({ job: copy(job), input: copy(pending.input), operation: copy(pending) });
     return complete(job, result);
   }
-  return {
+  const workflow={
     async create({ id = randomUUID(), participants, metadata = {} }, actor) {
       identifier(id); identifier(actor);
       if (!participants || !participants.requester || !participants.worker || !participants.verifier) throw new TypeError('Supply requester, worker and verifier participants');
@@ -118,7 +126,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       if (participants.requester === participants.worker || actor !== participants.requester) error('FORBIDDEN', 'Requester must create the job and differ from worker', 403);
       canonical(metadata); canonical(participants);
       const at = stamp();
-      const job = { work_status:'not_started',negotiation:null,escrow_ledger:null,id, protocol: 'a423.workflow.v1', version: 1, state: 'draft', participants: copy(participants), metadata: copy(metadata), agreement: null, submission: null, pending: null, operations: {}, evidence: [], events: [{ sequence: 1, type: 'created', actor_id: actor, at, data: {} }], created_at: at, updated_at: at };
+      const job = { subflows:[],active_subflow_id:null,work_status:'not_started',negotiation:null,escrow_ledger:null,id, protocol: 'a423.workflow.v1', version: 1, state: 'draft', participants: copy(participants), metadata: copy(metadata), agreement: null, submission: null, pending: null, operations: {}, evidence: [], events: [{ sequence: 1, type: 'created', actor_id: actor, at, data: {} }], created_at: at, updated_at: at };
       if (authorize && await authorize({ job: copy(job), action: 'create', actor, input: {} }) !== true) error('FORBIDDEN', 'Application policy rejected creation', 403);
       if (!await store.create(job)) error('CONFLICT', 'Job ID already exists');
       return copy(job);
@@ -143,6 +151,9 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
         if (job.pending.key !== key || job.pending.request_hash !== requestHash) error('OPERATION_PENDING', 'Reconcile or retry the pending operation first');
         return execute(job);
       }
+      const cancellation=require('./cancellation.cjs').getCancellationSubflow(job);
+      if(['propose_settlement','counter_settlement'].includes(action)&&cancellation?.instruction)error('CANCELLATION_ACCEPTED','An accepted instruction must be executed or resolved before renegotiating',409);
+      if(action==='approve_cancellation'&&cancellation?.instruction){const candidate=require('./cancellation.cjs').createCancellationInstruction(job,input);if(input.expected_revision!==job.negotiation.current.escrow_version||input.proposal_hash!==job.negotiation.current.proposal_hash||hashAgreement(candidate)!==hashAgreement(cancellation.instruction))error('CANCELLATION_CONFLICT','Another instruction is already accepted',409);return job;}
       if (!rule.from.includes(job.state)) error('INVALID_STATE', `Cannot ${action} from ${job.state}`);
       let next = copy(job);
       if (action === 'quote') {
@@ -157,6 +168,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       if (rule.effect) {
         if (!adapters[action]) error('ADAPTER_REQUIRED', `Configure ${action} adapter`, 501);
         next.pending = { id: `a423:${id}:${key}`, key, action, actor, input: copy(input), request_hash: requestHash, target: rule.to, created_at: stamp(), observation: null };
+        require('./cancellation.cjs').updateCancellationSubflow(job,next,{action,actor,phase:'requested',input,at:stamp()});
         job = await save(job, next, action + '.requested', actor);
         return execute(job);
       }
@@ -178,13 +190,25 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       await allowed(job, job.pending.action, actor, job.pending.input, rules[job.pending.action]);
       return execute(job, true);
     },
+    async cancellation(id,actor){return require('./cancellation.cjs').getCancellationSubflow(await get(id,actor));},
+    async cancellationInstruction(id,actor){const job=await get(id,actor),subflow=require('./cancellation.cjs').getCancellationSubflow(job);if(!subflow?.instruction)error('INSTRUCTION_UNAVAILABLE','No accepted cancellation instruction',409);return require('./cancellation.cjs').validateCancellationInstruction(job,subflow.instruction);},
+    async cancellationReceipt(id,actor){const job=await get(id,actor),subflow=require('./cancellation.cjs').getCancellationSubflow(job);if(subflow?.status!=='completed'||!subflow.receipt)error('RECEIPT_UNAVAILABLE','Cancellation payment is not confirmed',409);return require('./cancellation.cjs').validateCancellationReceipt(job,subflow.receipt);},
+    async acceptCancellation(id,input,{actor,idempotencyKey,forward=true}={}){
+      if(typeof forward!=='boolean')throw new TypeError('forward must be a boolean');
+      let job=await workflow.act(id,'approve_cancellation',input,{actor,idempotencyKey});
+      const subflow=require('./cancellation.cjs').getCancellationSubflow(job);
+      if(!forward||job.pending||!subflow?.instruction||subflow.status!=='accepted')return job;
+      return workflow.act(id,'execute_cancellation',{instruction_id:subflow.instruction.id},{actor,idempotencyKey:'cancel_forward_'+digest(subflow.instruction.id)});
+    },
     async receipts(id, actor) {
       const job = await get(id, actor);
-      return { protocol: job.protocol, job_id: id, state: job.state, agreement: job.agreement, submission: job.submission, work_status:job.work_status,negotiation:job.negotiation,escrow_ledger:job.escrow_ledger,evidence: job.evidence, events: job.events, pending: job.pending };
+      return { protocol: job.protocol, job_id: id, state: job.state, agreement: job.agreement, submission: job.submission, subflows:job.subflows||[],active_subflow_id:job.active_subflow_id||null,work_status:job.work_status,negotiation:job.negotiation,escrow_ledger:job.escrow_ledger,evidence: job.evidence, events: job.events, pending: job.pending };
     }
   };
+  return workflow;
 }
-function createWorkflowHandler({ workflow, authenticate, basePath = '/api/a423', maxBodyBytes = 65536, onError } = {}) {
+function createWorkflowHandler({ workflow, authenticate, basePath = '/api/a423', maxBodyBytes = 65536, onError, forwardCancellations = true, revalidateCancellationReceipt } = {}) {
+  if(typeof forwardCancellations!=='boolean')throw new TypeError('forwardCancellations must be a boolean');
   if (!workflow || typeof authenticate !== 'function' || !/^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(basePath)) throw new TypeError('Supply workflow, authenticate and valid basePath');
   if (!Number.isSafeInteger(maxBodyBytes) || maxBodyBytes < 1 || maxBodyBytes > 1048576) throw new TypeError('Invalid maxBodyBytes');
   const respond = (value, status = 200) => Response.json(value, { status, headers: { 'cache-control': 'no-store' } });
@@ -192,10 +216,10 @@ function createWorkflowHandler({ workflow, authenticate, basePath = '/api/a423',
     try {
       const path = new URL(request.url).pathname;
       if (!path.startsWith(basePath + '/')) error('NOT_FOUND', 'Route not found', 404);
-      const match = /^\/jobs(?:\/([A-Za-z0-9_-]{1,128})(?:\/(actions|reconcile|receipts))?)?$/.exec(path.slice(basePath.length));
+      const match = /^\/jobs(?:\/([A-Za-z0-9_-]{1,128})(?:\/(actions|reconcile|receipts|subflows|cancellation(?:\/(?:accept|execute|instruction|receipt))?))?)?$/.exec(path.slice(basePath.length));
       if (!match) error('NOT_FOUND', 'Route not found', 404);
       const [, id, action] = match;
-      const method = !id || action === 'actions' || action === 'reconcile' ? 'POST' : 'GET';
+      const method = !id || ['actions','reconcile','cancellation/accept','cancellation/execute'].includes(action) ? 'POST' : 'GET';
       if (request.method !== method) { const r = respond({ error: { code: 'METHOD_NOT_ALLOWED', message: `Use ${method}` } }, 405); r.headers.set('allow', method); return r; }
       const actor = await authenticate(request);
       if (!actor) error('UNAUTHENTICATED', 'Authentication required', 401);
@@ -208,6 +232,16 @@ function createWorkflowHandler({ workflow, authenticate, basePath = '/api/a423',
         try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { error('INVALID_INPUT', 'Invalid JSON', 400); }
       }
       if (!id) return respond({ job: await workflow.create(body, actor) }, 201);
+      if(action==='subflows'){const job=await workflow.get(id,actor);return respond({job_id:id,subflows:job.subflows||[],active_subflow_id:job.active_subflow_id||null});}
+      if(action==='cancellation')return respond({job_id:id,subflow:await workflow.cancellation(id,actor)});
+      if(action==='cancellation/instruction')return respond({instruction:await workflow.cancellationInstruction(id,actor)});
+      if(action==='cancellation/receipt'){
+        const receipt=await workflow.cancellationReceipt(id,actor);
+        if(revalidateCancellationReceipt)await revalidateCancellationReceipt({job:await workflow.get(id,actor),receipt,actor});
+        return respond({receipt});
+      }
+      if(action==='cancellation/accept')return respond({job:await workflow.acceptCancellation(id,body,{actor,idempotencyKey:request.headers.get('idempotency-key'),forward:forwardCancellations})});
+      if(action==='cancellation/execute')return respond({job:await workflow.act(id,'execute_cancellation',body,{actor,idempotencyKey:request.headers.get('idempotency-key')})});
       if (action === 'actions') return respond({ job: await workflow.act(id, body.action, body.input ?? {}, { actor, idempotencyKey: request.headers.get('idempotency-key') }) });
       if (action === 'reconcile') return respond({ job: await workflow.reconcile(id, actor) });
       if (action === 'receipts') return respond(await workflow.receipts(id, actor));
@@ -240,12 +274,24 @@ function createWorkflowClient({ baseUrl, headers, fetch: fetchImpl = globalThis.
     return data;
   }
   const path = id => '/jobs/' + identifier(id);
-  return {
+  const workflow={
     async create(input) { return (await request('/jobs',input)).job; },
     async get(id) { return (await request(path(id))).job; },
     async act(id,action,input,{idempotencyKey}={}) { identifier(action);identifier(idempotencyKey);return (await request(path(id)+'/actions',{action,input},idempotencyKey)).job; },
     async reconcile(id) { return (await request(path(id)+'/reconcile',{})).job; },
+    async cancellation(id){return (await request(path(id)+'/cancellation')).subflow;},
+    async cancellationInstruction(id){return (await request(path(id)+'/cancellation/instruction')).instruction;},
+    async cancellationReceipt(id){return (await request(path(id)+'/cancellation/receipt')).receipt;},
+    async subflows(id){return (await request(path(id)+'/subflows')).subflows;},
+    async acceptCancellation(id,input,{idempotencyKey}={}){identifier(idempotencyKey);return (await request(path(id)+'/cancellation/accept',input,idempotencyKey)).job;},
+    async executeCancellation(id,input,{idempotencyKey}={}){identifier(idempotencyKey);return (await request(path(id)+'/cancellation/execute',input,idempotencyKey)).job;},
     async receipts(id) { return request(path(id)+'/receipts'); }
   };
+  return workflow;
 }
 module.exports.createWorkflowClient = createWorkflowClient;
+
+module.exports.getCancellationSubflow=(job)=>require('./cancellation.cjs').getCancellationSubflow(job);
+module.exports.createCancellationInstruction=(job,proofs)=>require('./cancellation.cjs').createCancellationInstruction(job,proofs);
+module.exports.validateCancellationInstruction=(job,instruction)=>require('./cancellation.cjs').validateCancellationInstruction(job,instruction);
+module.exports.validateCancellationReceipt=(job,receipt)=>require('./cancellation.cjs').validateCancellationReceipt(job,receipt);

@@ -278,3 +278,79 @@ test('closing negotiation: a crash after proposal broadcast recovers and preserv
  const recovered=await f.w.reconcile(f.id,'worker');assert.equal(recovered.state,'settlement_negotiation');assert.equal(recovered.negotiation.history.length,1);
  const closed=await f.act('accept_settlement','buyer',acceptInput(recovered));assert.equal(closed.escrow_ledger.worker_paid,'30');
 });
+async function cancellationApproval(job){
+ const t=require('../src/escrow/index.cjs').settlementConsent(job,config);
+ return {...acceptInput(job),payer_signature:await wallets[0].signTypedData(t.domain,t.types,t.value),worker_signature:await wallets[1].signTypedData(t.domain,t.types,t.value)};
+}
+test('cancellation subflow: accepted JSON is durable before transfer; confirmed receipt records actual split',async()=>{
+ const f=await fixture('cancel_staged');await fund(f);
+ let job=await f.act('propose_settlement','worker',proposal(f));const input=await cancellationApproval(job);
+ const before=await token.balanceOf(wallets[1].address);
+ job=await f.w.acceptCancellation(f.id,input,{actor:'buyer',idempotencyKey:'approve-json',forward:false});
+ assert.equal(job.subflows[0].status,'accepted');assert.equal(job.subflows[0].parent_job_id,f.id);
+ assert.equal(job.escrow_ledger.locked_amount,'100');assert.equal(await token.balanceOf(wallets[1].address),before);
+ await assert.rejects(f.w.cancellationReceipt(f.id,'buyer'),{code:'RECEIPT_UNAVAILABLE'});
+ const instruction=await f.w.cancellationInstruction(f.id,'buyer');assert.equal(instruction.funds_status,'not_executed');assert.equal(instruction.worker.amount,'30');assert.equal(instruction.payer.amount,'70');
+ const api=require('../src/escrow/index.cjs');assert.equal(api.cancellationCall(JSON.parse(JSON.stringify(instruction))).functionName,'settleByConsent');
+ assert.throws(()=>api.validateCancellationInstruction(job,{...instruction,token:wallets[4].address}));
+ await assert.rejects(f.act('counter_settlement','buyer',proposal(f,'20',1)),{code:'CANCELLATION_ACCEPTED'});
+ job=await f.act('execute_cancellation','buyer',{instruction_id:instruction.id});assert.equal(job.state,'settled');assert.equal(job.subflows[0].status,'completed');assert.equal(job.active_subflow_id,null);
+ const receipt=await f.w.cancellationReceipt(f.id,'buyer');assert.equal(receipt.instruction_id,instruction.id);assert.equal(receipt.remaining_locked,'0');assert.equal(receipt.allocations.worker.amount,'30');assert.equal(receipt.allocations.payer.amount,'70');assert.equal(receipt.outcome,'mutual_cancellation');
+ assert.equal(await token.balanceOf(wallets[1].address),before+30n);
+ const {freshCancellationReceipt}=require('../src/operations/index.cjs');
+ const revalidate=require('../src/escrow/index.cjs').createEvidenceRevalidator({provider,...config,confirmations:1});
+ assert.equal((await freshCancellationReceipt({workflow:f.w,id:f.id,actor:'buyer',revalidate})).id,receipt.id);
+ await assert.rejects(f.w.cancellationReceipt(f.id,'intruder'),{code:'NOT_FOUND'});
+ job=await f.w.acceptCancellation(f.id,input,{actor:'buyer',idempotencyKey:'approve-json',forward:true});assert.equal(job.state,'settled');assert.equal(await token.balanceOf(wallets[1].address),before+30n);
+});
+test('cancellation subflow: invalid signatures never produce an accepted instruction or payment receipt',async()=>{
+ const f=await fixture('cancel_bad_proof');await fund(f);let job=await f.act('propose_settlement','worker',proposal(f));
+ const input=await cancellationApproval(job);input.payer_signature=input.worker_signature;
+ job=await f.w.acceptCancellation(f.id,input,{actor:'buyer',idempotencyKey:'bad-signatures'});assert.equal(job.state,'settlement_negotiation');assert.equal(job.subflows[0].instruction,null);assert.equal(job.subflows[0].receipt,null);assert.equal(job.escrow_ledger.locked_amount,'100');
+ await advance(101);job=await f.act('refund','buyer');assert.equal(job.subflows[0].receipt.outcome,'expiry_refund');assert.equal(job.subflows[0].receipt.instruction_id,null);
+});
+test('cancellation subflow: automatic forwarding persists acceptance before signing the closing transaction',async()=>{
+ let witnessed=false;let f;
+ f=await fixture('cancel_auto',{authorizeTransaction:async ctx=>{if(ctx.step==='execute_cancellation'){const stored=await f.w.get(f.id,'buyer');assert.equal(stored.subflows[0].status,'execution_pending');assert.ok(stored.subflows[0].instruction);witnessed=true;}return true;}});
+ await fund(f);let job=await f.act('propose_settlement','worker',proposal(f));const input=await cancellationApproval(job);
+ job=await f.w.acceptCancellation(f.id,input,{actor:'buyer',idempotencyKey:'accept-auto'});
+ for(let n=0;job.pending&&n<8;n++){await provider.send('evm_mine',[]);job=await f.w.reconcile(f.id,'buyer');}
+ assert.equal(job.subflows[0].status,'completed');assert.equal(witnessed,true);
+});
+test('cancellation subflow: expired accepted instructions retain locked balance until a real deadline refund',async()=>{
+ const f=await fixture('cancel_expired_instruction');await fund(f);const now=(await provider.getBlock('latest')).timestamp;
+ let job=await f.act('propose_settlement','worker',{...proposal(f),expires_at:now+5});const input=await cancellationApproval(job);
+ job=await f.w.acceptCancellation(f.id,input,{actor:'buyer',idempotencyKey:'accept-before-expiry',forward:false});const instruction=job.subflows[0].instruction;
+ await advance(6);job=await f.act('execute_cancellation','buyer',{instruction_id:instruction.id});assert.equal(job.subflows[0].status,'execution_failed');assert.equal(job.subflows[0].receipt,null);assert.equal(job.escrow_ledger.locked_amount,'100');
+ await advance(100);job=await f.act('refund','buyer');assert.equal(job.subflows[0].receipt.outcome,'expiry_refund');assert.equal(job.subflows[0].receipt.instruction_id,null);assert.equal(job.subflows[0].receipt.prior_instruction_id,instruction.id);
+});
+test('cancellation subflow: HTTP client stages acceptance, keeper forwards after SQLite reopen, fresh receipt fails closed',async()=>{
+ const {mkdtempSync,rmSync}=require('node:fs'),{join}=require('node:path'),{tmpdir}=require('node:os');const {createSqliteStorage}=require('../src/storage/index.cjs');
+ const {createWorkflowHandler,createWorkflowClient}=require('../src/workflow.cjs');const op=require('../src/operations/index.cjs');
+ const dir=mkdtempSync(join(tmpdir(),'a423-cancel-'));let storage=createSqliteStorage({filename:join(dir,'jobs.sqlite')});
+ try{
+ const f=await fixture('cancel_http',{workflowStore:storage.jobs,transactions:storage.transactions});await fund(f);let job=await f.act('propose_settlement','worker',proposal(f));const input=await cancellationApproval(job);
+ let workflow=f.w;const validate=require('../src/escrow/index.cjs').createEvidenceRevalidator({provider,...config,confirmations:1});
+ const makeHandler=revalidate=>op.createApplicationHandler({workflow,store:storage.jobs,authenticate:()=> 'buyer',forwardCancellations:false,revalidate});
+ let handler=makeHandler(validate);const client=createWorkflowClient({baseUrl:'https://app.test/api/a423',fetch:(url,init)=>handler(new Request(url,init))});
+ job=await client.acceptCancellation(f.id,input,{idempotencyKey:'http-accept'});assert.equal((await client.cancellation(f.id)).status,'accepted');assert.equal((await client.subflows(f.id)).length,1);const instruction=await client.cancellationInstruction(f.id);
+ await assert.rejects(client.cancellationReceipt(f.id),{code:'RECEIPT_UNAVAILABLE'});
+ storage.close();storage=createSqliteStorage({filename:join(dir,'jobs.sqlite')});
+ const adapters=createEscrowAdapters({authorizeTransaction:async()=>true,provider,...config,signerFor:async a=>wallets[actors[a]],addressFor:async a=>wallets[actors[a]].address,transactions:storage.transactions,confirmations:1,validateArtifact:async()=>true});
+ workflow=createWorkflow({store:storage.jobs,adapters,transitions:escrowTransitions});handler=makeHandler(validate);
+ await op.runMaintenanceOnce({workflow,store:storage.jobs,actorFor:async()=> 'buyer'});assert.equal((await client.cancellation(f.id)).status,'accepted');
+ for(let i=0;i<8;i++){await op.runMaintenanceOnce({workflow,store:storage.jobs,actorFor:async()=> 'buyer',allowExecute:true});job=await workflow.get(f.id,'buyer');if(!job.pending&&job.state==='settled')break;await provider.send('evm_mine',[]);}
+ assert.equal((await client.cancellationReceipt(f.id)).instruction_id,instruction.id);
+ handler=makeHandler(async()=>({status:'invalid',reason:'reorg'}));await assert.rejects(client.cancellationReceipt(f.id),{code:'EVIDENCE_UNAVAILABLE'});
+ }finally{storage.close();rmSync(dir,{recursive:true,force:true});}
+});
+test('cancellation subflow: crash after escrow execution recovers one receipt without a duplicate transfer',async()=>{
+ const memory=createMemoryStore();let crash=true;
+ const store={...memory,compareAndSet:async(id,v,next)=>{if(crash&&next.subflows?.[0]?.status==='completed'){crash=false;return false;}return memory.compareAndSet(id,v,next);}};
+ const f=await fixture('cancel_crash',{workflowStore:store});await fund(f);const proposed=await f.act('propose_settlement','worker',proposal(f));
+ await f.w.acceptCancellation(f.id,await cancellationApproval(proposed),{actor:'buyer',idempotencyKey:'stage',forward:false});const instruction=await f.w.cancellationInstruction(f.id,'buyer');const before=await token.balanceOf(wallets[1].address);
+ await assert.rejects(f.act('execute_cancellation','buyer',{instruction_id:instruction.id}),{code:'CONFLICT'});
+ assert.equal((await f.w.cancellation(f.id,'buyer')).status,'execution_pending');assert.equal(await token.balanceOf(wallets[1].address),before+30n);
+ const job=await f.w.reconcile(f.id,'buyer');assert.equal(job.subflows[0].status,'completed');const receipt=await f.w.cancellationReceipt(f.id,'buyer');assert.equal(receipt.instruction_id,instruction.id);
+ await f.w.reconcile(f.id,'buyer');assert.equal(await token.balanceOf(wallets[1].address),before+30n);assert.equal((await f.w.cancellationReceipt(f.id,'buyer')).id,receipt.id);
+});
