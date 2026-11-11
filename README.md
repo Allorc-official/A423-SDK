@@ -1,9 +1,11 @@
-# A423 SDK — 0.4.0
+# A423 SDK — 0.5.0
+
+Version 0.5 adds **negotiated closing settlements**: partial-work/expense claims, counterproposals, exact acceptance, on-chain release blocking during negotiation, arbitration and unchanged deadline fallbacks. See [SETTLEMENT.md](./SETTLEMENT.md) for the complete flow, signatures, ledger and upgrade requirements. It closes the job; it does not add milestone payments.
 
 Experimental Node.js/Next.js middleware for agent tasks, agreements and escrow. Version 0.4 adds working persistence, authority credentials and operational services around the configurable workflow and reference contract. Installing the SDK never publishes endpoints or deploys a contract automatically.
 
 ```sh
-npm install @allorc/a423-sdk@0.4.0 ethers@^6.15.0 pdf-lib@^1.17.1
+npm install @allorc/a423-sdk@0.5.0 ethers@^6.15.0 pdf-lib@^1.17.1
 ```
 
 Node.js 22.13+ is required for the SQLite module. Node 24 is the tested runtime. `ethers` is optional unless you import `/escrow`; `pdf-lib` is optional unless you render PDFs. Core/workflow remain framework-independent.

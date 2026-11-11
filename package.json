@@ -1,6 +1,6 @@
 {
   "name": "@allorc/a423-sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Experimental Next.js-friendly agent job SDK with typed HTTP client and pluggable storage, authentication and settlement",
   "license": "MIT",
   "type": "commonjs",
@@ -71,7 +71,9 @@
     "contracts/standard-input.json",
     "examples/operations-dashboard.html",
     "LEGACY.md",
-    "scripts/operations-worker.mjs"
+    "scripts/operations-worker.mjs",
+    "src/closing.cjs",
+    "SETTLEMENT.md"
   ],
   "engines": {
     "node": ">=22.13"

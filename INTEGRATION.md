@@ -1,3 +1,7 @@
+# Closing settlements in 0.5
+
+Read SETTLEMENT.md. Use a new local/testnet reference deployment, preserve older funded contracts with their original adapters, wire proposal/counter/accept actions and the settlement-consent endpoint, and display work status/escrow ledger/negotiation separately. Test partial compensation, stale and expired approvals, arbitration, original deadlines and crash recovery. No real-chain deployment is implicit.
+
 # Integration update for 0.4
 
 Read OPERATIONS.md before following the older integration checklist below. Persistence, authority credentials, renewal, spending authorization, application projections/chat tools, keeper/resume, execution queue, watcher/indexer, PDF receipts and a local UI shell are now provided as concrete modules. Choose the supplied implementation or adapt deliberately.
@@ -9,7 +13,7 @@ The remote MVP was not available in the SDK workspace; these utilities do not im
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.4.0
+npm install @allorc/a423-sdk@0.5.0
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.

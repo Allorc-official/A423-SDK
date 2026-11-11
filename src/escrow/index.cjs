@@ -6,9 +6,13 @@ const ABI = artifact.abi;
 const TOKEN_ABI = ['function allowance(address,address) view returns(uint256)','function approve(address,uint256) returns(bool)'];
 const TERMS_TYPES = { Terms: [ ['jobId','bytes32'],['payer','address'],['worker','address'],['verifier','address'],['arbitrator','address'],['amount','uint256'],['workDeadline','uint64'],['reviewDeadline','uint64'],['resolutionDeadline','uint64'],['timeoutWorkerBps','uint16'],['agreementHash','bytes32'] ].map(([name,type])=>({name,type})) };
 const transitions = {
-  dispute: {from:['submitted','verified'],roles:['requester','worker','verifier'],to:'disputed',effect:true},
+  propose_settlement: {from:['funded','running','submitted','verified'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
+  counter_settlement: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
+  accept_settlement: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settled',effect:true},
+  refund: {from:['funded','running','settlement_negotiation','disputed'],roles:['requester'],to:'refunded',effect:true},
+  dispute: {from:['funded','running','submitted','verified','settlement_negotiation'],roles:['requester','worker','verifier'],to:'disputed',effect:true},
   resolve: {from:['disputed'],roles:['arbitrator'],to:'settled',effect:true},
-  timeout: {from:['funded','running','submitted','verified','disputed'],roles:['requester','worker','verifier','arbitrator'],to:'settled',effect:true}
+  timeout: {from:['funded','running','submitted','verified','disputed','settlement_negotiation'],roles:['requester','worker','verifier','arbitrator'],to:'settled',effect:true}
 };
 function check(condition,message) { if(!condition) throw new Error('Escrow: '+message); }
 function positive(value,name) { check(typeof value==='string' && /^[1-9][0-9]*$/.test(value),name+' must be a positive decimal string');const n=BigInt(value);check(n<(1n<<256n),name+' exceeds uint256');return n; }
@@ -108,12 +112,41 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
     const event=logs.find(log=>log?.name===eventName && log.args.jobId===t.jobId);
     check(event,'matching '+eventName+' event missing');
     const snapshot=await contract.getJob(t.jobId,{blockTag:r.blockNumber});match(snapshot,t);validate(snapshot,event);
-    return {status:'confirmed',evidence:require('../operations/index.cjs').validateEscrowEvidence({chain_id:String(chainId),contract:config.contractAddress,token:config.tokenAddress,job_id:t.jobId,agreement_hash:t.agreementHash,transaction_hash:r.hash,block_number:r.blockNumber,block_hash:r.blockHash,confirmations,event:eventName,settlement_reason:eventName==='Settled'?Number(event.args.reason):null,reason_hash:eventName==='Disputed'?event.args.reasonHash:null,amount:t.amount.toString(),payer:t.payer,worker:t.worker,verifier:t.verifier,arbitrator:t.arbitrator,result_hash:snapshot.resultHash,worker_paid:snapshot.workerPaid.toString(),state:Number(snapshot.state),observed_at:new Date().toISOString()})};
+    return {status:'confirmed',evidence:require('../operations/index.cjs').validateEscrowEvidence({chain_id:String(chainId),contract:config.contractAddress,token:config.tokenAddress,job_id:t.jobId,agreement_hash:t.agreementHash,transaction_hash:r.hash,block_number:r.blockNumber,block_hash:r.blockHash,confirmations,event:eventName,escrow_version:Number(snapshot.proposal.revision),proposal_hash:snapshot.proposal.proposalHash,proposal_worker_amount:snapshot.proposal.workerAmount.toString(),proposal_expires_at:Number(snapshot.proposal.expiresAt),proposal_proposer:snapshot.proposal.proposer,settlement_reason:eventName==='Settled'?Number(event.args.reason):null,reason_hash:eventName==='Disputed'?event.args.reasonHash:null,amount:t.amount.toString(),payer:t.payer,worker:t.worker,verifier:t.verifier,arbitrator:t.arbitrator,result_hash:snapshot.resultHash,worker_paid:snapshot.workerPaid.toString(),state:Number(snapshot.state),observed_at:new Date().toISOString()})};
   }
   function adapter(run){return {execute:ctx=>run(ctx,false),reconcile:ctx=>run(ctx,true)};}
   const state=(s,n)=>check(Number(s.state)===n,'unexpected escrow state');
   const settled=(s,e,t)=>{check([5,6,7].includes(Number(s.state)),'not settled');check(e.args.workerAmount+e.args.payerAmount===t.amount && e.args.workerAmount===s.workerPaid,'settlement amount mismatch');};
+  async function propose(ctx,reconcile){
+    const {settlementProposal}=require('./negotiation.cjs');
+    const t=await context(ctx.job);let proposal;
+    try {proposal=settlementProposal(ctx.job,ctx.input);}catch(error){return {status:'rejected',reason:error.message};}
+    return observe(ctx,t,'propose_settlement','proposeSettlement',[t.jobId,ctx.input.expected_revision,BigInt(proposal.worker_amount),proposal.proposal_hash,proposal.expires_at],'SettlementProposed',(s,e)=>{
+      check(Number(s.state)===8,'negotiation is not active');
+      check(Number(e.args.revision)===proposal.escrow_version && e.args.proposalHash===proposal.proposal_hash && e.args.workerAmount===BigInt(proposal.worker_amount) && e.args.payerAmount===BigInt(proposal.payer_amount) && Number(e.args.expiresAt)===proposal.expires_at && getAddress(e.args.proposer)===getAddress(ctx.settlementActorAddress), 'proposal event mismatch');
+    },reconcile);
+  }
+  const proposeAdapter=adapter(async(ctx,r)=>{ctx.settlementActorAddress=getAddress(await addressFor(ctx.operation.actor));return propose(ctx,r);});
   return {
+    propose_settlement:proposeAdapter,
+    counter_settlement:proposeAdapter,
+    accept_settlement:adapter(async(ctx,r)=>{
+      const {settlementConsent}=require('./negotiation.cjs');const t=await context(ctx.job);const p=ctx.job.negotiation?.current;
+      if(!p || ctx.input.expected_revision!==p.escrow_version || ctx.input.proposal_hash!==p.proposal_hash)return {status:'rejected',reason:'Accept the exact current proposal hash and revision'};
+      let consent;try{consent=settlementConsent(ctx.job,config);}catch(error){return {status:'rejected',reason:error.message};}
+      let method='acceptSettlement',args=[t.jobId,p.escrow_version,p.proposal_hash];
+      if(ctx.input.payer_signature!==undefined || ctx.input.worker_signature!==undefined){
+        if(typeof ctx.input.payer_signature!=='string'||typeof ctx.input.worker_signature!=='string')return {status:'rejected',reason:'Both party signatures required for relayed settlement'};
+        method='settleByConsent';args=[consent.value,ctx.input.payer_signature,ctx.input.worker_signature];
+      }else if(ctx.job.negotiation.current.proposer_id===ctx.operation.actor)return {status:'rejected',reason:'Counterparty must accept; proposer cannot self-accept'};
+      const result=await observe(ctx,t,'accept_settlement',method,args,'Settled',(s,e)=>{settled(s,e,t);check(Number(e.args.reason)===4 && e.args.workerAmount===BigInt(p.worker_amount) && e.args.payerAmount===BigInt(p.payer_amount) && Number(s.proposal.revision)===p.escrow_version && s.proposal.proposalHash===p.proposal_hash,'closing allocation mismatch');},r);
+      if(result.status==='confirmed'){
+        const receipt=await provider.getTransactionReceipt(result.evidence.transaction_hash);
+        const accepted=receipt.logs.filter(l=>getAddress(l.address)===config.contractAddress).map(l=>{try{return iface.parseLog(l);}catch{return null;}}).find(e=>e?.name==='SettlementAccepted'&&e.args.jobId===t.jobId);
+        check(accepted&&Number(accepted.args.revision)===p.escrow_version&&accepted.args.proposalHash===p.proposal_hash,'matching settlement acceptance missing');
+      }
+      return result;
+    }),
     fund:adapter(async(ctx,reconcile)=>{
       const t=await context(ctx.job);
       check([ctx.job.participants.requester,ctx.job.participants.worker].every(p=>ctx.job.agreement.accepted_by.includes(p)),'both acceptances required');
@@ -142,9 +175,9 @@ function createEscrowAdapters({provider,chainId,contractAddress,tokenAddress,sig
     refund:adapter(async(ctx,r)=>{const t=await context(ctx.job);return observe(ctx,t,'refund','refundExpired',[t.jobId],'Settled',(s,e)=>{state(s,6);settled(s,e,t);check(e.args.payerAmount===t.amount && Number(e.args.reason)===1,'not an expiry refund');},r);}),
     dispute:adapter(async(ctx,r)=>{const t=await context(ctx.job);const reason=bytes32(ctx.input.reason_hash);return observe(ctx,t,'dispute','dispute',[t.jobId,reason],'Disputed',(s,e)=>{check(Number(s.state)>=4,'missing dispute');check(e.args.reasonHash===reason,'reason mismatch');},r);}),
     resolve:adapter(async(ctx,r)=>{const t=await context(ctx.job);check(typeof ctx.input.worker_amount==='string' && /^(0|[1-9][0-9]*)$/.test(ctx.input.worker_amount),'worker_amount must be decimal string');const amount=BigInt(ctx.input.worker_amount);check(amount<=t.amount,'resolution exceeds escrow');return observe(ctx,t,'resolve','resolve',[t.jobId,amount],'Settled',(s,e)=>{settled(s,e,t);check(e.args.workerAmount===amount && Number(e.args.reason)===2,'resolution mismatch');},r);}),
-    timeout:adapter(async(ctx,r)=>{const t=await context(ctx.job);const method=['funded','running'].includes(ctx.job.state)?'refundExpired':'timeout';return observe(ctx,t,'timeout',method,[t.jobId],'Settled',(s,e)=>{settled(s,e,t);const expected=method==='refundExpired'?0n:(t.amount*BigInt(t.timeoutWorkerBps))/10000n;check(e.args.workerAmount===expected && Number(e.args.reason)===(method==='refundExpired'?1:3),'timeout allocation mismatch');},r);})
+    timeout:adapter(async(ctx,r)=>{const t=await context(ctx.job);const snapshot=await contract.getJob(t.jobId);const method=snapshot.resultHash===ZeroHash?'refundExpired':'timeout';return observe(ctx,t,'timeout',method,[t.jobId],'Settled',(s,e)=>{settled(s,e,t);const expected=method==='refundExpired'?0n:(t.amount*BigInt(t.timeoutWorkerBps))/10000n;check(e.args.workerAmount===expected && Number(e.args.reason)===(method==='refundExpired'?1:3),'timeout allocation mismatch');},r);})
   };
 }
 module.exports={createEscrowAdapters,createMemoryTransactionStore,workerConsent,escrowTerms,escrowTransitions:transitions,ESCROW_ABI:ABI,ESCROW_BYTECODE:artifact.bytecode};
 
-Object.assign(module.exports,require('./services.cjs'));
+Object.assign(module.exports,require('./services.cjs'),require('./negotiation.cjs'));

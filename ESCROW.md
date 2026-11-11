@@ -1,11 +1,13 @@
-# Reference on-chain escrow (0.4.0)
+# Reference on-chain escrow (0.5.0)
+
+For negotiated cancellation and partial compensation, see [SETTLEMENT.md](./SETTLEMENT.md). The 0.5 contract adds proposal/counter/accept operations and a Negotiating state; a new deployment is required.
 
 This opt-in module implements a real ERC-20 escrow path. The generic workflow remains provider-independent. It includes Solidity source, reproducibly compiled ABI/bytecode, an ethers v6 adapter and local-EVM tests. It is experimental and has not received an independent security audit; deploy to a local chain/testnet for evaluation. No contract is deployed automatically and no funds move merely by installing the package.
 
 ## Installation and deployment
 
 ```sh
-npm install @allorc/a423-sdk@0.4.0 ethers@^6.15.0
+npm install @allorc/a423-sdk@0.5.0 ethers@^6.15.0
 ```
 
 ```ts

@@ -133,3 +133,17 @@ test('receiver authenticates authority credentials with public key only and expl
  let active=true;const verify=createCredentialVerifier({issuer:'public-root',audience:'app',publicKey:a.publicKey,isActive:async()=>active});assert.equal((await verify(token)).sub,'agent');active=false;await assert.rejects(verify(token));
  }finally{s.close();}
 });
+test('closing proposal helper commits claims/allocations and rejects unbalanced or excessive compensation',()=>{
+ const {hashAgreement}=require('../src/workflow.cjs'),{settlementProposal}=require('../src/closing.cjs');
+ const terms={escrow:{amount:'100',resolution_deadline:1000}},job={id:'closing',agreement:{terms,hash:hashAgreement(terms)}};
+ const input={worker_amount:'30',expected_revision:0,expires_at:500,reason:'Partial work',claims:[{kind:'expense',description:'Research',amount:'10',evidence:['receipt:a']}]};
+ const p=settlementProposal(job,input);assert.equal(p.payer_amount,'70');assert.equal(p.escrow_version,1);assert.equal(p.closes_job,true);
+ assert.notEqual(settlementProposal(job,{...input,reason:'Changed reason'}).proposal_hash,p.proposal_hash);
+ assert.throws(()=>settlementProposal(job,{...input,payer_amount:'80'}));assert.throws(()=>settlementProposal(job,{...input,worker_amount:'101'}));assert.throws(()=>settlementProposal(job,{...input,expires_at:1001}));
+});
+test('queued execution receives an abort signal when cancellation pauses work',async()=>{
+ const s=createSqliteStorage({filename:':memory:'});try{
+ const w=createWorkflow({store:s.jobs});let job=await w.create({id:'pause-run',participants},'buyer');job={...job,version:2,state:'running',agreement:{revision:1,hash:'test',terms:{task},accepted_by:['buyer','worker']},events:[...job.events,{sequence:2,type:'start.confirmed',actor_id:'worker',at:new Date().toISOString(),data:{}}]};await s.jobs.compareAndSet(job.id,1,job);await op.enqueueRunningJobs({store:s.jobs,queue:s.queue});
+ await assert.rejects(op.runExecutionOnce({workflow:w,queue:s.queue,leaseMs:90,beforeExecute:async()=>true,execute:async({signal})=>{const current=await s.jobs.get(job.id);await s.jobs.compareAndSet(job.id,current.version,{...current,version:current.version+1,pending:{action:'propose_settlement'}});return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}}),{code:'WORK_PAUSED'});
+ }finally{s.close();}
+});

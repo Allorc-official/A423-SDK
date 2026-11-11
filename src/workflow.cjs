@@ -75,7 +75,31 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
     next.operations[pending.key] = { request_hash: pending.request_hash, status: 'confirmed', result: copy(result) };
     next.evidence.push({ action: pending.action, operation_id: pending.id, evidence: copy(result.evidence) });
     if (pending.action === 'submit') next.submission = copy(pending.input);
-    return save(job, next, pending.action + '.confirmed', pending.actor, result.evidence);
+    let eventData=copy(result.evidence);
+    if(['propose_settlement','counter_settlement'].includes(pending.action)){
+      const proposal=require('./closing.cjs').settlementProposal(job,pending.input);
+      if(result.evidence.proposal_hash!==proposal.proposal_hash || result.evidence.escrow_version!==proposal.escrow_version)error('INVALID_ADAPTER_RESULT','Confirmed proposal must match exact claimed terms',502);
+      const record={...proposal,proposer_id:pending.actor,at:stamp()};
+      next.negotiation={status:'open',origin_state:job.negotiation?.origin_state||job.state,current:record,history:[...(job.negotiation?.history||[]),record]};
+      next.work_status='paused';eventData={...eventData,proposal:record};
+    }
+    if(pending.action==='accept_settlement'){
+      const p=job.negotiation?.current;
+      if(!p || result.evidence.settlement_reason!==4 || result.evidence.worker_paid!==p.worker_amount || result.evidence.proposal_hash!==p.proposal_hash || result.evidence.escrow_version!==p.escrow_version)error('INVALID_ADAPTER_RESULT','Closing settlement evidence mismatch',502);
+      next.negotiation={...copy(job.negotiation),status:'settled',accepted_by:pending.actor,settled_at:stamp()};next.work_status='stopped';
+    }
+    if(pending.action==='dispute'){next.work_status='paused';if(next.negotiation)next.negotiation.status='disputed';}
+    if(['release','refund','resolve','timeout'].includes(pending.action)){
+      next.work_status=pending.action==='release'?'completed':'stopped';
+      if(next.negotiation)next.negotiation={...next.negotiation,status:'settled',settled_at:stamp()};
+    }
+    if(['start','submit','verify'].includes(pending.action))next.work_status={start:'running',submit:'submitted',verify:'verified'}[pending.action];
+    const e=result.evidence;
+    if(typeof e.amount==='string'&&typeof e.worker_paid==='string'&&Number.isInteger(e.state)){
+      const closed=[5,6,7].includes(e.state);
+      next.escrow_ledger={funded_amount:e.amount,worker_paid:e.worker_paid,payer_refunded:closed?(BigInt(e.amount)-BigInt(e.worker_paid)).toString():'0',locked_amount:closed?'0':e.amount,escrow_version:e.escrow_version??0};
+    }
+    return save(job, next, pending.action + '.confirmed', pending.actor, eventData);
   }
   async function execute(job, reconcile = false) {
     const pending = job.pending;
@@ -94,13 +118,13 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       if (participants.requester === participants.worker || actor !== participants.requester) error('FORBIDDEN', 'Requester must create the job and differ from worker', 403);
       canonical(metadata); canonical(participants);
       const at = stamp();
-      const job = { id, protocol: 'a423.workflow.v1', version: 1, state: 'draft', participants: copy(participants), metadata: copy(metadata), agreement: null, submission: null, pending: null, operations: {}, evidence: [], events: [{ sequence: 1, type: 'created', actor_id: actor, at, data: {} }], created_at: at, updated_at: at };
+      const job = { work_status:'not_started',negotiation:null,escrow_ledger:null,id, protocol: 'a423.workflow.v1', version: 1, state: 'draft', participants: copy(participants), metadata: copy(metadata), agreement: null, submission: null, pending: null, operations: {}, evidence: [], events: [{ sequence: 1, type: 'created', actor_id: actor, at, data: {} }], created_at: at, updated_at: at };
       if (authorize && await authorize({ job: copy(job), action: 'create', actor, input: {} }) !== true) error('FORBIDDEN', 'Application policy rejected creation', 403);
       if (!await store.create(job)) error('CONFLICT', 'Job ID already exists');
       return copy(job);
     },
     get,
-    async assertSafe(id,actor){const job=await get(id,actor);const safety=store.getSafety?await store.getSafety(id):null;if(safety?.blocked)error('SAFETY_HOLD','Evidence requires reconciliation',409);return job;},
+    async assertSafe(id,actor){const job=await get(id,actor);const safety=store.getSafety?await store.getSafety(id):null;if(safety?.blocked)error('SAFETY_HOLD','Evidence requires reconciliation',409);if(['propose_settlement','counter_settlement','dispute'].includes(job.pending?.action)||job.state==='settlement_negotiation')error('WORK_PAUSED','Settlement negotiation pauses work',409);return job;},
     async act(id, action, input, { actor, idempotencyKey } = {}) {
       identifier(actor); identifier(idempotencyKey); identifier(action); canonical(input);
       let job = await get(id, actor);
@@ -156,7 +180,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
     },
     async receipts(id, actor) {
       const job = await get(id, actor);
-      return { protocol: job.protocol, job_id: id, state: job.state, agreement: job.agreement, submission: job.submission, evidence: job.evidence, events: job.events, pending: job.pending };
+      return { protocol: job.protocol, job_id: id, state: job.state, agreement: job.agreement, submission: job.submission, work_status:job.work_status,negotiation:job.negotiation,escrow_ledger:job.escrow_ledger,evidence: job.evidence, events: job.events, pending: job.pending };
     }
   };
 }

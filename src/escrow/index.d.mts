@@ -27,7 +27,7 @@ export interface EscrowAdapterOptions extends EscrowConfiguration {
   confirmations: number;
   validateArtifact?(context: { job: WorkflowJob; resultHash: string }): Promise<boolean>;
 }
-export function createEscrowAdapters(options: EscrowAdapterOptions): Record<'fund'|'start'|'submit'|'verify'|'release'|'refund'|'dispute'|'resolve'|'timeout', EscrowAdapter>;
+export function createEscrowAdapters(options: EscrowAdapterOptions): Record<'fund'|'start'|'submit'|'verify'|'release'|'refund'|'dispute'|'resolve'|'timeout'|'propose_settlement'|'counter_settlement'|'accept_settlement', EscrowAdapter>;
 export function createMemoryTransactionStore(): TransactionStore;
 export function escrowTerms(job: WorkflowJob, config: EscrowConfiguration): ContractTerms;
 export function workerConsent(job: WorkflowJob, config: EscrowConfiguration): {
@@ -46,3 +46,6 @@ export function replacePendingTransaction(options: {id: string;transactions: Tra
 export function createFeeReplacementWorker(options: {transactions: TransactionStore;provider: Provider;signerForRecord(record: TransactionRecord): Promise<Signer>;authorize(context: any): Promise<boolean>;minAgeMs?: number;maxAttempts?: number;maxFeePerGas: bigint;maxPriorityFeePerGas: bigint}): () => Promise<any[]>;
 
 export function createEscrowIndexer(options: {provider: Provider;chainId: number;contractAddress: string;confirmations: number;fromBlock: number;kv: import('../storage/index.js').KeyValueStore;onEvent(event: any): Promise<void>;onReorg(event: any): Promise<void>;batchSize?: number}): () => Promise<{indexed: number;through?: number}>;
+
+export function settlementProposal(job: WorkflowJob,input: {worker_amount: string;payer_amount?: string;expected_revision: number;expires_at: number;reason: string;claims?: import('../workflow.js').SettlementClaim[]}): import('../workflow.js').SettlementProposal;
+export function settlementConsent(job: WorkflowJob,configuration: EscrowConfiguration): {domain: {name: string;version: string;chainId: number;verifyingContract: string};types: Record<string,TypedDataField[]>;value: {jobId: string;agreementHash: string;escrowVersion: number;workerAmount: bigint;payerAmount: bigint;proposalHash: string;expiresAt: number}};

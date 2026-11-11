@@ -195,3 +195,86 @@ test('real EVM application journey uses durable SQLite, credential auth, HTTP ac
  const consent=await handler(new Request('https://app.test/api/a423-worker-consent/http-app',{headers}));assert.equal(consent.status,403);
  }finally{s.close();}
 });
+function proposal(f,worker='30',expected=0){return {worker_amount:worker,expected_revision:expected,expires_at:f.terms.escrow.work_deadline-1,reason:'Research completed; analysis remains unfinished',claims:[{kind:'work',description:'Collected and checked sources',amount:'20',evidence:['artifact:source-list']},{kind:'expense',description:'Agreed research cost',amount:'10',evidence:['receipt:research-cost']}]};}
+function acceptInput(job){return {expected_revision:job.negotiation.current.escrow_version,proposal_hash:job.negotiation.current.proposal_hash};}
+test('closing negotiation: partial work and costs, counteroffer, exact acceptance and split ledger',async()=>{
+ const f=await fixture('closing');await fund(f);await f.act('start','worker');
+ const beforeBuyer=await token.balanceOf(wallets[0].address),beforeWorker=await token.balanceOf(wallets[1].address);
+ let job=await f.act('propose_settlement','worker',proposal(f));assert.equal(job.state,'settlement_negotiation');assert.equal(job.work_status,'paused');assert.equal(job.negotiation.current.worker_amount,'30');assert.equal(job.escrow_ledger.locked_amount,'100');assert.equal(job.negotiation.current.claims.length,2);
+ await assert.rejects(f.w.assertSafe(f.id,'worker'),{code:'WORK_PAUSED'});
+ await assert.rejects(escrow.connect(wallets[1]).submit(f.consent.value.jobId,hash('late work')));
+ await assert.rejects(escrow.connect(wallets[2]).release(f.consent.value.jobId));
+ const altered=structuredClone(job);altered.negotiation.current.reason='Altered claim';assert.throws(()=>require('../src/escrow/index.cjs').settlementConsent(altered,config));
+ const stale=acceptInput(job);job=await f.act('counter_settlement','buyer',proposal(f,'20',1));assert.equal(job.negotiation.history.length,2);assert.equal(job.negotiation.current.payer_amount,'80');
+ assert.equal((await f.act('accept_settlement','worker',stale,'stale-accept')).state,'settlement_negotiation');
+ assert.equal((await f.act('accept_settlement','buyer',acceptInput(job),'self-accept')).state,'settlement_negotiation');
+ job=await f.act('accept_settlement','worker',acceptInput(job));assert.equal(job.state,'settled');assert.equal(job.work_status,'stopped');assert.equal(job.negotiation.status,'settled');
+ assert.deepEqual(job.escrow_ledger,{funded_amount:'100',worker_paid:'20',payer_refunded:'80',locked_amount:'0',escrow_version:2});
+ assert.equal(await token.balanceOf(wallets[0].address),beforeBuyer+80n);assert.equal(await token.balanceOf(wallets[1].address),beforeWorker+20n);
+ await f.act('accept_settlement','worker',acceptInput(job));assert.equal(await token.balanceOf(wallets[1].address),beforeWorker+20n);
+ const {createEvidenceRevalidator}=require('../src/escrow/index.cjs');const validate=createEvidenceRevalidator({provider,...config,confirmations:1});for(const item of job.evidence)if(item.evidence.transaction_hash)assert.equal((await validate(job,item.evidence)).status,'valid');
+});
+test('closing negotiation: proposals work before execution and after submission/verification',async()=>{
+ for(const stage of ['funded','submitted','verified']){
+  const f=await fixture('closing_'+stage);await fund(f);if(stage!=='funded')await submit(f);if(stage==='verified')await f.act('verify','verifier');
+  let job=await f.act('propose_settlement','buyer',proposal(f,'10'));assert.equal(job.negotiation.origin_state,stage);
+  if(stage==='verified')await assert.rejects(escrow.connect(wallets[2]).release(f.consent.value.jobId));
+  job=await f.act('accept_settlement','worker',acceptInput(job));assert.equal(job.state,'settled');assert.equal(job.escrow_ledger.worker_paid,'10');
+ }
+});
+test('closing negotiation: invalid amounts, roles, revisions and extended deadlines do not move money',async()=>{
+ const f=await fixture('closing_invalid');await fund(f);
+ assert.equal((await f.act('propose_settlement','buyer',proposal(f,'101'),'over')).state,'funded');
+ await assert.rejects(f.act('propose_settlement','verifier',proposal(f)),{code:'FORBIDDEN'});
+ await assert.rejects(f.act('propose_settlement','intruder',proposal(f)),{code:'NOT_FOUND'});
+ assert.equal((await f.act('propose_settlement','buyer',{...proposal(f),expires_at:f.terms.escrow.resolution_deadline+1},'extended')).state,'funded');
+ let job=await f.act('propose_settlement','buyer',proposal(f));
+ assert.equal((await f.act('counter_settlement','worker',proposal(f,'20',0),'stale')).negotiation.current.escrow_version,1);
+ assert.equal((await f.act('counter_settlement','buyer',proposal(f,'20',1),'same-proposer')).negotiation.current.escrow_version,1);
+ job=await f.act('accept_settlement','worker',acceptInput(job));assert.equal(job.escrow_ledger.worker_paid,'30');
+});
+test('closing negotiation: expired proposals cannot settle or extend the original refund deadline',async()=>{
+ const f=await fixture('closing_expired');await fund(f);const now=(await provider.getBlock('latest')).timestamp;
+ const job=await f.act('propose_settlement','worker',{...proposal(f),expires_at:now+5});await advance(6);
+ assert.equal((await f.act('accept_settlement','buyer',acceptInput(job))).state,'settlement_negotiation');
+ await assert.rejects(escrow.acceptSettlement(f.consent.value.jobId,1,job.negotiation.current.proposal_hash));
+ await advance(100);const refunded=await f.act('refund','buyer');assert.equal(refunded.state,'refunded');assert.equal(refunded.escrow_ledger.payer_refunded,'100');
+});
+test('closing negotiation: pre-submission disagreement can escalate to arbitrated compensation',async()=>{
+ const f=await fixture('closing_arbitrated');await fund(f);await f.act('start','worker');await f.act('propose_settlement','worker',proposal(f));
+ const disputed=await f.act('dispute','buyer',{reason_hash:hash('cannot agree on partial work')});assert.equal(disputed.negotiation.status,'disputed');
+ await assert.rejects(escrow.acceptSettlement(f.consent.value.jobId,1,disputed.negotiation.current.proposal_hash));
+ const resolved=await f.act('resolve','arb',{worker_amount:'40'});assert.equal(resolved.state,'settled');assert.equal(resolved.escrow_ledger.worker_paid,'40');assert.equal(resolved.escrow_ledger.payer_refunded,'60');
+});
+test('closing negotiation: submitted negotiations retain the original timeout allocation',async()=>{
+ const f=await fixture('closing_timeout');await fund(f);await submit(f);await f.act('propose_settlement','buyer',proposal(f,'10'));await advance(301);
+ const job=await f.act('timeout','worker');assert.equal(job.state,'settled');assert.equal(job.escrow_ledger.worker_paid,'25');assert.equal(job.escrow_ledger.payer_refunded,'75');assert.equal(job.negotiation.status,'settled');
+});
+test('closing negotiation: both signatures can be relayed, while stale/changed/cross-chain proofs fail',async()=>{
+ const {settlementConsent}=require('../src/escrow/index.cjs');const f=await fixture('closing_signatures');await fund(f);
+ let job=await f.act('propose_settlement','worker',proposal(f));let typed=settlementConsent(job,config);
+ const oldPayer=await wallets[0].signTypedData(typed.domain,typed.types,typed.value),oldWorker=await wallets[1].signTypedData(typed.domain,typed.types,typed.value),old=typed;
+ job=await f.act('counter_settlement','buyer',proposal(f,'20',1));typed=settlementConsent(job,config);
+ await assert.rejects(escrow.connect(wallets[4]).settleByConsent(old.value,oldPayer,oldWorker));
+ const payer=await wallets[0].signTypedData(typed.domain,typed.types,typed.value),worker=await wallets[1].signTypedData(typed.domain,typed.types,typed.value);
+ const wrongChain=await wallets[0].signTypedData({...typed.domain,chainId:1},typed.types,typed.value);await assert.rejects(escrow.connect(wallets[4]).settleByConsent(typed.value,wrongChain,worker));
+ await assert.rejects(escrow.connect(wallets[4]).settleByConsent({...typed.value,workerAmount:21n,payerAmount:79n},payer,worker));
+ const tx=await escrow.connect(wallets[4]).settleByConsent(typed.value,payer,worker);await tx.wait();
+ job=await f.act('accept_settlement','worker',{...acceptInput(job),transaction_hash:tx.hash});assert.equal(job.state,'settled');assert.equal(job.escrow_ledger.worker_paid,'20');
+ await assert.rejects(escrow.connect(wallets[4]).settleByConsent(typed.value,payer,worker));
+});
+test('closing negotiation: zero/full compensation settle immediately without a work submission',async()=>{
+ for(const amount of ['0','100']){const f=await fixture('closing_full_'+amount);await fund(f);let job=await f.act('propose_settlement','worker',proposal(f,amount));job=await f.act('accept_settlement','buyer',acceptInput(job));assert.equal(job.escrow_ledger.worker_paid,amount);assert.equal(job.escrow_ledger.payer_refunded,String(100-Number(amount)));assert.equal(job.state,'settled');}
+});
+test('closing negotiation: SDK can relay both party signatures through its journal',async()=>{
+ const {settlementConsent}=require('../src/escrow/index.cjs');const f=await fixture('closing_sdk_relay');await fund(f);let job=await f.act('propose_settlement','buyer',proposal(f,'35'));const t=settlementConsent(job,config);
+ job=await f.act('accept_settlement','buyer',{...acceptInput(job),payer_signature:await wallets[0].signTypedData(t.domain,t.types,t.value),worker_signature:await wallets[1].signTypedData(t.domain,t.types,t.value)});assert.equal(job.state,'settled');assert.equal(job.escrow_ledger.worker_paid,'35');
+});
+test('closing negotiation: a crash after proposal broadcast recovers and preserves the paused job',async()=>{
+ const memory=createMemoryStore();let failSave=true;const store={...memory,compareAndSet:async(id,v,next)=>{if(failSave&&next.negotiation?.status==='open'){failSave=false;return false;}return memory.compareAndSet(id,v,next);}};
+ const f=await fixture('closing_recovery',{workflowStore:store});await fund(f);
+ await assert.rejects(f.act('propose_settlement','worker',proposal(f)),{code:'CONFLICT'});
+ const pending=await f.w.get(f.id,'worker');assert.equal(pending.pending.action,'propose_settlement');await assert.rejects(f.w.assertSafe(f.id,'worker'),{code:'WORK_PAUSED'});
+ const recovered=await f.w.reconcile(f.id,'worker');assert.equal(recovered.state,'settlement_negotiation');assert.equal(recovered.negotiation.history.length,1);
+ const closed=await f.act('accept_settlement','buyer',acceptInput(recovered));assert.equal(closed.escrow_ledger.worker_paid,'30');
+});

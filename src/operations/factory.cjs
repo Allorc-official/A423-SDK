@@ -2,7 +2,7 @@
 const {createWorkflow,hashAgreement}=require('../workflow.cjs');
 const {createCredentialAuthenticator,createAuthorityHandler}=require('../authority/index.cjs');
 function createEscrowApplication({storage,authority,escrows,signerFor,addressFor,limitsFor,approveSigning,validateArtifact,execute,keeperEnabled=false,allowAuthorityRequest=async()=>false,requireIndependentArbitrator=true}={}){
- const {createEscrowRegistry,createEvidenceRevalidator,escrowTerms,workerConsent,escrowTransitions}=require('../escrow/index.cjs');
+ const {createEscrowRegistry,createEvidenceRevalidator,escrowTerms,workerConsent,settlementConsent,escrowTransitions}=require('../escrow/index.cjs');
  const {validateTask,validateEscrowEvidence,createSpendingAuthorizer,createExpiryAdapter,createApplicationHandler,createChatTools}=require('./index.cjs');
  if(!storage||!authority||!Array.isArray(escrows)||!escrows.length||typeof approveSigning!=='function'||typeof limitsFor!=='function')throw new TypeError('Explicit storage, authority, escrow configurations and spending/signing approvals required');
  const registry=new Map(escrows.map(c=>[String(c.chainId)+':'+c.contractAddress.toLowerCase(),c]));
@@ -24,7 +24,7 @@ function createEscrowApplication({storage,authority,escrows,signerFor,addressFor
  const validators=new Map(escrows.map(c=>[String(c.chainId)+':'+c.contractAddress.toLowerCase(),createEvidenceRevalidator(c)]));
  const revalidate=(job,evidence)=>validators.get(String(configFor(job).chainId)+':'+configFor(job).contractAddress.toLowerCase())(job,evidence);
  const authenticate=createCredentialAuthenticator({authority});
- const applicationOptions={workflow,store:storage.jobs,queue:storage.queue,authenticate,revalidate,consentFor:async job=>workerConsent(job,configFor(job)),authorityHandler:createAuthorityHandler({authority,allowRequest:allowAuthorityRequest})};
+ const applicationOptions={workflow,store:storage.jobs,queue:storage.queue,authenticate,revalidate,consentFor:async job=>workerConsent(job,configFor(job)),settlementConsentFor:async job=>settlementConsent(job,configFor(job)),authorityHandler:createAuthorityHandler({authority,allowRequest:allowAuthorityRequest})};
  const workerOptions={authority,actorFor:async job=>job.pending?.actor||job.participants.requester,allowExecute:keeperEnabled,
   execute,beforeExecute:async job=>{await workflow.assertSafe(job.id,job.participants.worker);if(!await authority.isActive(job.participants.worker))return false;const result=await adapters.start.execute({job,input:{},operation:{actor:job.participants.worker}});return result.status==='confirmed';}
  };

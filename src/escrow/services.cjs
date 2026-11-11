@@ -5,7 +5,7 @@ const {validateEscrowEvidence}=require('../operations/index.cjs');
 function check(ok,message){if(!ok)throw Error(message);}
 function createEscrowRegistry(configurations){
  const map=new Map();for(const c of configurations){const key=c.chainId+':'+getAddress(c.contractAddress).toLowerCase();check(!map.has(key),'Duplicate escrow configuration');map.set(key,createEscrowAdapters(c));}
- const actions=['fund','start','submit','verify','release','refund','dispute','resolve','timeout'];const result={};for(const action of actions){result[action]={};for(const method of ['execute','reconcile'])result[action][method]=ctx=>{const e=ctx.job.agreement?.terms.escrow;const adapter=map.get(e?.chain_id+':'+getAddress(e?.contract).toLowerCase());check(adapter,'Escrow not registered');return adapter[action][method](ctx);};}return result;
+ const actions=['fund','start','submit','verify','release','refund','dispute','resolve','timeout','propose_settlement','counter_settlement','accept_settlement'];const result={};for(const action of actions){result[action]={};for(const method of ['execute','reconcile'])result[action][method]=ctx=>{const e=ctx.job.agreement?.terms.escrow;const adapter=map.get(e?.chain_id+':'+getAddress(e?.contract).toLowerCase());check(adapter,'Escrow not registered');return adapter[action][method](ctx);};}return result;
 }
 /** Fresh historical evidence verification. Returns invalid, insufficient_confirmations, or valid; RPC failures throw. */
 function createEvidenceRevalidator({provider,chainId,contractAddress,tokenAddress,confirmations}={}){
@@ -31,6 +31,9 @@ function createEvidenceRevalidator({provider,chainId,contractAddress,tokenAddres
   if(event.name==='Funded'&&(event.args.amount!==t.amount||getAddress(event.args.payer)!==t.payer||getAddress(event.args.worker)!==t.worker||event.args.agreementHash!==t.agreementHash))return invalid('Funding fields mismatch');
   if(['Submitted','Verified'].includes(event.name)&&event.args.resultHash!==snapshot.resultHash)return invalid('Artifact mismatch');
   if(event.name==='Disputed'&&event.args.reasonHash!==evidence.reason_hash)return invalid('Dispute reason mismatch');
+  if(event.name==='SettlementProposed'&&(Number(event.args.revision)!==evidence.escrow_version||event.args.proposalHash!==evidence.proposal_hash||event.args.workerAmount.toString()!==evidence.proposal_worker_amount||Number(event.args.expiresAt)!==evidence.proposal_expires_at||getAddress(event.args.proposer)!==getAddress(evidence.proposal_proposer)))return invalid('Proposal fields mismatch');
+  if(evidence.escrow_version!==undefined && (Number(snapshot.proposal.revision)!==evidence.escrow_version||snapshot.proposal.proposalHash!==evidence.proposal_hash||snapshot.proposal.workerAmount.toString()!==evidence.proposal_worker_amount||Number(snapshot.proposal.expiresAt)!==evidence.proposal_expires_at||getAddress(snapshot.proposal.proposer)!==getAddress(evidence.proposal_proposer)))return invalid('Cached proposal mismatch');
+  if(event.name==='Settled'&&Number(event.args.reason)===4){const acceptance=logs.find(l=>l?.name==='SettlementAccepted'&&l.args.jobId===t.jobId);if(!acceptance||Number(acceptance.args.revision)!==evidence.escrow_version||acceptance.args.proposalHash!==evidence.proposal_hash)return invalid('Mutual acceptance missing');}
   if(event.name==='Settled'&&(event.args.workerAmount!==snapshot.workerPaid||event.args.payerAmount+event.args.workerAmount!==t.amount||Number(event.args.reason)!==evidence.settlement_reason))return invalid('Settlement mismatch');
   return {status:'valid',transaction_hash:receipt.hash,block_hash:block.hash,confirmations:head.number-block.number+1};
  };

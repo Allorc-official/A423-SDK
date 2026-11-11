@@ -16,8 +16,8 @@ function validateEscrowEvidence(e){
  for(const key of ['contract','token','payer','worker','verifier','arbitrator'])assert(/^0x[0-9a-fA-F]{40}$/.test(e[key]),'Invalid evidence '+key);
  for(const key of ['job_id','agreement_hash','transaction_hash','block_hash','result_hash'])assert(/^0x[0-9a-fA-F]{64}$/.test(e[key]),'Invalid evidence '+key);
  assert(Number.isSafeInteger(e.block_number)&&e.block_number>=0&&Number.isSafeInteger(e.confirmations)&&e.confirmations>0,'Invalid evidence block');
- assert(['Funded','Submitted','Verified','Disputed','Settled'].includes(e.event),'Invalid evidence event');
- assert(Number.isInteger(e.state)&&e.state>=1&&e.state<=7&&BigInt(e.worker_paid)<=BigInt(e.amount),'Invalid evidence allocation/state');
+ assert(['Funded','Submitted','Verified','Disputed','Settled','SettlementProposed'].includes(e.event),'Invalid evidence event');
+ assert(Number.isInteger(e.state)&&e.state>=1&&e.state<=8&&BigInt(e.worker_paid)<=BigInt(e.amount),'Invalid evidence allocation/state');
  return structuredClone(e);
 }
 function createSpendingAuthorizer({spending,limitsFor,authorize}={}){
@@ -40,8 +40,8 @@ async function runMaintenanceOnce({workflow,store,actorFor,allowExecute=false,no
    let result=job;
    if(job.pending){result=await workflow.reconcile(job.id,actor);if(result.pending&&allowExecute)result=await workflow.resume(job.id,actor);}
    else if(job.agreement){const e=job.agreement.terms.escrow;const seconds=Math.floor(now/1000);let action;
-    if(e&&['funded','running'].includes(job.state)&&seconds>e.work_deadline)action='timeout';
-    if(e&&['submitted','verified','disputed'].includes(job.state)&&seconds>e.resolution_deadline)action='timeout';
+    if(e&&(['funded','running'].includes(job.state)||(['settlement_negotiation','disputed'].includes(job.state)&&!job.submission))&&seconds>e.work_deadline)action='timeout';
+    if(e&&['submitted','verified','disputed','settlement_negotiation'].includes(job.state)&&seconds>e.resolution_deadline)action='timeout';
     const expiry=job.agreement.terms.expires_at;
     if(['quoted','accepted'].includes(job.state)&&Number.isSafeInteger(expiry)&&seconds>expiry)action='expire';
     if(action&&allowExecute)result=await workflow.act(job.id,action,{}, {actor,idempotencyKey:'keeper_'+hash(job.id+':'+action)});
@@ -58,10 +58,11 @@ function createExpiryAdapter({now=()=>Date.now()}={}){const run=async({job})=>{
 };return {execute:run,reconcile:run};}
 async function runExecutionOnce({workflow,queue,execute,beforeExecute,leaseMs=30000}={}){
  const item=await queue.claim({kind:'execution',leaseMs});if(!item)return null;
- const heartbeat=setInterval(()=>{queue.heartbeat(item.id,item.lease,{leaseMs}).catch(()=>{});},Math.max(1,Math.floor(leaseMs/3)));
+ const controller=new AbortController();
+ const heartbeat=setInterval(async()=>{try{if(!await queue.heartbeat(item.id,item.lease,{leaseMs}))throw Error('Execution lease lost');const current=await workflow.assertSafe(item.payload.job_id,item.payload.actor);if(current.state!=='running')throw Error('Work paused');}catch(error){controller.abort(error);}},Math.max(1,Math.min(1000,Math.floor(leaseMs/3))));
  try{
   let result=item.result;
-  if(!result){const job=await workflow.assertSafe(item.payload.job_id,item.payload.actor);assert(job.state==='running','Work requires running state');validateTask(job.agreement.terms.task);assert(typeof beforeExecute==='function'&&await beforeExecute(job)===true,'Execution eligibility check required');result=await execute({job,idempotencyKey:item.id});assert(await queue.checkpoint(item.id,item.lease,result),'Execution lease lost');}
+  if(!result){const job=await workflow.assertSafe(item.payload.job_id,item.payload.actor);assert(job.state==='running','Work requires running state');validateTask(job.agreement.terms.task);assert(typeof beforeExecute==='function'&&await beforeExecute(job)===true,'Execution eligibility check required');result=await execute({job,idempotencyKey:item.id,signal:controller.signal});assert(await queue.checkpoint(item.id,item.lease,result),'Execution lease lost');}
   assert(typeof result.result_hash==='string','Execution must return artifact commitment');
   const job=await workflow.act(item.payload.job_id,'submit',result,{actor:item.payload.actor,idempotencyKey:'execution_'+hash(item.id)});
   assert(await queue.complete(item.id,item.lease,{job_id:job.id,state:job.state}),'Execution lease lost');return job;
@@ -91,7 +92,7 @@ function createWebhookDispatcher({queue,kv,subscriptions,secretFor,fetch:fetchIm
 }
 async function watchEvidenceOnce({store,revalidate}){const results=[];let after='';while(true){const jobs=await store.list({after,limit:100});if(!jobs.length)break;after=jobs.at(-1).id;for(const job of jobs){if(!job.evidence.length)continue;const checks=[];for(const item of job.evidence)if(item.evidence.transaction_hash){try{checks.push(await revalidate(job,item.evidence));}catch(error){checks.push({status:'unavailable',message:'Evidence provider unavailable'});}}
  const blocked=checks.some(c=>c.status!=='valid');const safety={blocked,checks,checked_at:new Date().toISOString()};await store.setSafety(job.id,safety);results.push({id:job.id,...safety});}}return results;}
-async function freshReceipts({workflow,id,actor,revalidate}){const job=await workflow.get(id,actor);const checks=[];for(const item of job.evidence)if(item.evidence.transaction_hash){const result=await revalidate(job,item.evidence);assert(result.status==='valid','Receipt evidence is not currently valid: '+result.status);checks.push(result);}return {...await workflow.receipts(id,actor),revalidated_at:new Date().toISOString(),checks};}
+async function freshReceipts({workflow,id,actor,revalidate}){const job=await workflow.get(id,actor);for(const p of job.negotiation?.history||[]){const canonical=require('../closing.cjs').settlementProposal(job,{worker_amount:p.worker_amount,payer_amount:p.payer_amount,expected_revision:p.escrow_version-1,expires_at:p.expires_at,reason:p.reason,claims:p.claims});assert(canonical.proposal_hash===p.proposal_hash,'Stored settlement claims changed');}const checks=[];for(const item of job.evidence)if(item.evidence.transaction_hash){const result=await revalidate(job,item.evidence);assert(result.status==='valid','Receipt evidence is not currently valid: '+result.status);checks.push(result);}return {...await workflow.receipts(id,actor),revalidated_at:new Date().toISOString(),checks};}
 async function renderReceiptPdf(receipt){const {PDFDocument,StandardFonts}=require('pdf-lib');const pdf=await PDFDocument.create(),font=await pdf.embedFont(StandardFonts.Courier);let page,y;const newPage=()=>{page=pdf.addPage([595,842]);y=800;};newPage();const text=JSON.stringify(receipt,null,2).replace(/[^\x20-\x7e\n]/g,'?');for(const line of ['A423 Evidence Receipt',...text.split('\n')])for(let i=0;i<Math.max(1,line.length);i+=88){if(y<40)newPage();page.drawText(line.slice(i,i+88),{x:32,y,size:9,font});y-=12;}return pdf.save();}
 function planLegacyMigration(records){return records.map(record=>({id:record.id,state:record.state,automatic:false,reason:['funded','running','submitted','verified','paid','settlement_pending','completed'].includes(String(record.state).toLowerCase())?'Existing custody/evidence must stay with original contract; do not relabel':'Requires reviewed participant and accepted-terms mapping; create a new job with provenance'}));}
 module.exports={validateTask,validateEscrowEvidence,createSpendingAuthorizer,runMaintenanceOnce,createExpiryAdapter,runExecutionOnce,enqueueRunningJobs,createEventStream,createWebhookDispatcher,watchEvidenceOnce,freshReceipts,renderReceiptPdf,planLegacyMigration};

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0
+
+- Add reference-contract closing proposals, counterproposals, exact counterpart acceptance and dual-signature permissionless settlement.
+- Add Negotiating state (8), stale-revision protection, expiry/amount/signature binding, ordinary release blocking and original deadline exits.
+- Support pre-submission compensation disputes; retain the original unsubmitted expiry refund.
+- Track work status, immutable claim/proposal history and a separate escrow ledger.
+- Add typed proposal/consent helpers, chat/HTTP/wallet/dashboard integration, cooperative execution abort and fresh proposal/settlement receipts.
+- Add local-EVM negotiation, replay, fallback and recovery tests. Requires a new contract deployment; no milestone/continuing-work payments or audit claim.
+
 ## 0.4.0
 
 - Add durable single-host SQLite workflow/transaction/nonce/queue/event/spending storage and local-only reset.

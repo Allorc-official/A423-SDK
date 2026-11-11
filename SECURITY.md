@@ -13,3 +13,5 @@ The reference token must support exact transfers. Unsupported fee/rebase/blackli
 Reorg watchers quarantine stale/unavailable evidence; they cannot guarantee finality or undo already executed external work. Continuous operation, monitoring, deliberate recovery and chain availability are still necessary. Do not clear holds without current matching evidence.
 
 Report vulnerabilities privately through the repository's configured security reporting channel. Do not post credentials, customer records or live exploit details publicly. No completed independent audit is claimed.
+
+Closing settlements in 0.5 require a new deployment and exact current proposal acceptance. Publishing freezes ordinary release, but cannot reverse a release already mined. Proposals never extend original refund/resolution deadlines. Unsubmitted partial-work claims do not remove the original expiry refund right; arbitrary expenses are not automatically owed. First valid closing settlement/refund/arbitration/timeout wins; no later operation can settle the same job again. See SETTLEMENT.md.

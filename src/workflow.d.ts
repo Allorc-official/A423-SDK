@@ -2,7 +2,12 @@ export type Json = null | boolean | number | string | Json[] | { [key: string]: 
 export interface Agreement { revision: number; terms: { [key: string]: Json }; hash: string; accepted_by: string[] }
 export interface Operation { id: string; key: string; action: string; actor: string; input: Json; request_hash: string; target: string; created_at: string; observation: AdapterResult | null }
 export interface AdapterResult { status: 'pending' | 'confirmed' | 'rejected'; evidence?: { [key: string]: Json }; [key: string]: Json | undefined }
+export interface SettlementClaim {kind: 'work' | 'expense' | 'other';description: string;amount?: string;evidence?: string[]}
+export interface SettlementProposal {version: 'a423.closing.v1';job_id: string;agreement_hash: string;escrow_version: number;worker_amount: string;payer_amount: string;expires_at: number;reason: string;claims: SettlementClaim[];closes_job: true;proposal_hash: string;proposer_id?: string;at?: string}
+export interface Negotiation {status: 'open' | 'disputed' | 'settled';origin_state: string;current: SettlementProposal;history: SettlementProposal[];accepted_by?: string;settled_at?: string}
+export interface EscrowLedger {funded_amount: string;worker_paid: string;payer_refunded: string;locked_amount: string;escrow_version: number}
 export interface WorkflowJob {
+  work_status?: string;negotiation?: Negotiation | null;escrow_ledger?: EscrowLedger | null;
   id: string; protocol: 'a423.workflow.v1'; version: number; state: string;
   participants: { requester: string; worker: string; verifier: string; [role: string]: string };
   metadata: Json; agreement: Agreement | null; submission: Json;
@@ -38,7 +43,7 @@ export interface Workflow {
   act(id: string, action: string, input: Json, options: { actor: string; idempotencyKey: string }): Promise<WorkflowJob>;
   resume(id: string, actor: string): Promise<WorkflowJob>;
   reconcile(id: string, actor: string): Promise<WorkflowJob>;
-  receipts(id: string, actor: string): Promise<Pick<WorkflowJob, 'protocol' | 'state' | 'agreement' | 'submission' | 'evidence' | 'events' | 'pending'> & { job_id: string }>;
+  receipts(id: string, actor: string): Promise<Pick<WorkflowJob, 'protocol' | 'state' | 'agreement' | 'submission' | 'evidence' | 'events' | 'pending' | 'work_status' | 'negotiation' | 'escrow_ledger'> & { job_id: string }>;
 }
 export function hashAgreement(terms: Json): string;
 export function createWorkflow(options: WorkflowOptions): Workflow;
