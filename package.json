@@ -1,0 +1,53 @@
+{
+  "name": "@allorc/a423-sdk",
+  "version": "0.1.0",
+  "description": "Experimental Next.js-friendly agent job SDK with typed HTTP client and pluggable storage, authentication and settlement",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "./src/index.cjs",
+  "types": "./src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.mjs",
+      "require": "./src/index.cjs"
+    }
+  },
+  "files": [
+    "src/index.cjs",
+    "src/index.mjs",
+    "src/index.d.ts",
+    "examples/client.mjs",
+    "examples/nextjs/lib/a423.ts",
+    "examples/nextjs/app/api/a423/*/route.ts",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "pack:check": "npm pack --dry-run --ignore-scripts",
+    "prepublishOnly": "npm test"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "nextjs",
+    "agent",
+    "a423",
+    "sdk",
+    "experimental"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Allorc-official/A423-SDK.git"
+  },
+  "homepage": "https://github.com/Allorc-official/A423-SDK#readme",
+  "bugs": {
+    "url": "https://github.com/Allorc-official/A423-SDK/issues"
+  }
+}
