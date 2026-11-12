@@ -84,7 +84,8 @@
     "src/policy",
     "PROFIT-POLICY.md",
     "examples/quickstart.mjs",
-    "examples/README.md"
+    "examples/README.md",
+    "docs/diagrams"
   ],
   "engines": {
     "node": ">=22.13"

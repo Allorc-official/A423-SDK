@@ -2,6 +2,8 @@
 
 ## Unreleased documentation
 
+- Replace Mermaid-only README blocks with pre-rendered PNG images, zoomable SVGs and editable diagram sources; include documentation assets in the package.
+
 - Rewrite the README around installation/version checks, initialization argument definitions, typed job fields, end-to-end action tables and Mermaid process maps.
 - Add a runnable no-chain quickstart and an examples index; include both in the npm package.
 - Explain published versus source versions, private economics, cancellation/reopening boundaries and actual receipt confirmation.

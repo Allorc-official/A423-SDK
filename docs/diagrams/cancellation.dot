@@ -1,0 +1,30 @@
+digraph A423 {
+ graph [rankdir=TB, bgcolor="white", pad="0.38", nodesep="0.38", ranksep="0.55", splines=polyline, fontname="DejaVu Sans", fontsize=24, fontcolor="#0f172a", labelloc=t, labeljust=c];
+ node [shape=box, style="rounded,filled", fillcolor="#f1f5f9", color="#94a3b8", fontcolor="#0f172a", fontname="DejaVu Sans", fontsize=14, margin="0.18,0.12", penwidth=1.3];
+ edge [color="#64748b", fontcolor="#475569", fontname="DejaVu Sans", fontsize=11, penwidth=1.2, arrowsize=0.75];
+
+ graph [label="A423 cancellation settlement\nAcceptance is authorization, not payment"];
+ Active [label="Funded or active job"];
+ Proposal [label="Propose closing split\nPause work; tokens locked", fillcolor="#dbeafe", color="#2563eb"];
+ Decision [shape=diamond, label="Agree on\nthe exact split?", fillcolor="#f8fafc"];
+ Counter [label="Counteroffer\nNew revision / hash", fillcolor="#dbeafe", color="#2563eb"];
+ Sign [label="Both wallets sign\nExact current terms", fillcolor="#dbeafe", color="#2563eb"];
+ Instruction [label="Save accepted JSON\nFUNDS STILL LOCKED", fillcolor="#fef3c7", color="#d97706", penwidth=2];
+ Execute [label="Journal and send\nSigned escrow call", fillcolor="#fef3c7", color="#d97706"];
+ Confirm [label="Confirm transfers\nPayout + refund", fillcolor="#dcfce7", color="#16a34a"];
+ Receipt [label="Final receipt\nActual amounts; locked = 0", fillcolor="#dcfce7", color="#16a34a", penwidth=2];
+ Arbiter [label="Dispute\nArbitrator split", fillcolor="#fee2e2", color="#dc2626"];
+ Deadline [label="Deadline exit\nEligible refund / timeout", fillcolor="#f1f5f9"];
+ Failed [label="Pending / failed\nNo payment receipt", fillcolor="#fee2e2", color="#dc2626"];
+ Active -> Proposal -> Decision;
+ Decision -> Counter [label="Counter"];
+ Counter -> Decision [label="Review again"];
+ Decision -> Sign [label="Approve"];
+ Sign -> Instruction -> Execute -> Confirm -> Receipt;
+ Execute -> Failed [label="Not confirmed"];
+ Failed -> Execute [label="Authorized recovery", constraint=false];
+ Decision -> Arbiter [label="Disagree"];
+ Arbiter -> Confirm [label="Resolve"];
+ Decision -> Deadline [label="Eligible deadline"];
+ Deadline -> Confirm [label="Fallback"];
+}

@@ -30,15 +30,11 @@ A423 is a backend SDK for agent-to-agent, human-to-agent and agent-to-human jobs
 
 ## What runs where
 
-```mermaid
-flowchart TD
-  Caller["Your UI, human or AI agent"] --> Backend["Your backend with A423 SDK"]
-  Backend <--> Store["Private durable storage"]
-  Backend --> RPC["RPC connection to chosen network"]
-  RPC <--> Escrow["Deployed A423Escrow contract"]
-  Escrow --> Wallets["Worker payout and payer refund"]
-  Wallets -->|"Wallet approvals and signatures"| Backend
-```
+Diagrams are provided as ordinary PNG images, with zoomable SVGs and editable sources in [docs/diagrams](./docs/diagrams/README.md). No Mermaid support is required.
+
+![A423 architecture: application backend, SDK services, RPC and on-chain escrow custody](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/architecture.png)
+
+[Open PNG](./docs/diagrams/architecture.png) · [Zoomable SVG](./docs/diagrams/architecture.svg) · [Editable source](./docs/diagrams/architecture.dot)
 
 | Component | Responsibility |
 |---|---|
@@ -337,24 +333,9 @@ Quotes receive a canonical agreement hash and monotonic revision. Both parties a
 
 ## End-to-end job lifecycle
 
-```mermaid
-flowchart TD
-  Draft["draft: create job"] --> Quoted["quoted: propose terms"]
-  Quoted --> Accepted["accepted: both parties approve revision and hash"]
-  Accepted --> Funded["funded: confirmed custody"]
-  Funded --> Running["running: fresh eligibility gate"]
-  Running --> Submitted["submitted: confirmed artifact commitment"]
-  Submitted --> Verified["verified: artifact checks and chain approval"]
-  Verified --> Paid["paid: confirmed worker payout"]
-  Draft --> Cancelled["cancelled: no SDK funding attempt"]
-  Quoted --> Cancelled
-  Accepted --> Cancelled
-  Funded --> Refunded["refunded: expired without submission"]
-  Running --> Refunded
-  Submitted --> Disputed["disputed: settlement requires resolution"]
-  Verified --> Disputed
-  Disputed --> Settled["settled: arbitration or eligible timeout"]
-```
+![A423 primary job states: agreement, funding, completion, disputes, closing settlement and refunds](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/job-lifecycle.png)
+
+[Open PNG](./docs/diagrams/job-lifecycle.png) · [Zoomable SVG](./docs/diagrams/job-lifecycle.svg) · [Editable source](./docs/diagrams/job-lifecycle.dot)
 
 The chart shows common completion and dispute paths; funded/running jobs also support direct disputes and closing negotiation.
 
@@ -390,22 +371,9 @@ const workerSignature = await workerWallet.signTypedData(
 
 After funding, ordinary `cancel` cannot simply unlock the money. Instead negotiate a **closing settlement**: worker compensation for agreed partial work/expenses, with the remainder refunded. This closes the entire job; it is not a continuing-work milestone payment.
 
-```mermaid
-flowchart TD
-  Active["Funded, running, submitted or verified job"] --> Proposal["Publish closing proposal; pause work"]
-  Proposal --> Decision{"Agreement on the split?"}
-  Decision -->|"Counter"| Counter["New revision and proposal hash"]
-  Counter --> Decision
-  Decision -->|"Approve"| Sign["Both wallets sign exact current terms"]
-  Sign --> Instruction["Save accepted cancellation JSON"]
-  Instruction --> Execute["Encode and send escrow transaction"]
-  Execute --> Confirm["Confirm actual payout and refund"]
-  Confirm --> Receipt["Final cancellation receipt; locked amount zero"]
-  Decision -->|"Dispute"| Arbiter["Arbitrator resolves supported split"]
-  Arbiter --> Confirm
-  Decision -->|"Original deadline reached"| Deadline["Eligible refund or timeout transaction"]
-  Deadline --> Confirm
-```
+![A423 cancellation: counteroffers, signed JSON instruction, escrow execution and confirmed receipt](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/cancellation.png)
+
+[Open PNG](./docs/diagrams/cancellation.png) · [Zoomable SVG](./docs/diagrams/cancellation.svg) · [Editable source](./docs/diagrams/cancellation.dot)
 
 For a funded 100-unit job, an agreed worker allocation of 30 means **30 to the worker, 70 to the payer**, once confirmed. JSON is an instruction artifact; the contract validates typed signatures and amounts, not arbitrary JSON.
 
@@ -450,17 +418,9 @@ If parties disagree, original deadline exits and supported arbitration remain av
 
 Cancelled jobs keep their IDs and history. The requester uses `cancel`; the worker uses `decline`. Both are allowed from `draft`, `quoted` or `accepted`, **only before an SDK funding attempt**. Further quotes/acceptance are rejected until explicit eligible reopening.
 
-```mermaid
-flowchart TD
-  Cancelled["Cancelled job with retained history"] --> Eligible{"Any funding attempt or financial close?"}
-  Eligible -->|"Yes"| Terminal["Do not reopen; reconcile or create a new linked job"]
-  Eligible -->|"No"| Approvals{"Worker declined or both had accepted?"}
-  Approvals -->|"Yes"| Both["Requester and worker approve reopening"]
-  Approvals -->|"No"| Requester["Requester approves reopening"]
-  Both --> New["Same job ID; new generation; active agreement cleared"]
-  Requester --> New
-  New --> Fresh["Fresh quote and fresh bilateral acceptance"]
-```
+![A423 controlled reopening: funding eligibility, required approvals and a fresh agreement](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/reopening.png)
+
+[Open PNG](./docs/diagrams/reopening.png) · [Zoomable SVG](./docs/diagrams/reopening.svg) · [Editable source](./docs/diagrams/reopening.dot)
 
 ```js
 let job = await app.workflow.act(id, 'decline', {

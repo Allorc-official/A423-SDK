@@ -1,0 +1,23 @@
+digraph A423 {
+ graph [rankdir=TB, bgcolor="white", pad="0.38", nodesep="0.38", ranksep="0.55", splines=polyline, fontname="DejaVu Sans", fontsize=24, fontcolor="#0f172a", labelloc=t, labeljust=c];
+ node [shape=box, style="rounded,filled", fillcolor="#f1f5f9", color="#94a3b8", fontcolor="#0f172a", fontname="DejaVu Sans", fontsize=14, margin="0.18,0.12", penwidth=1.3];
+ edge [color="#64748b", fontcolor="#475569", fontname="DejaVu Sans", fontsize=11, penwidth=1.2, arrowsize=0.75];
+
+ graph [label="A423 controlled reopening\nKeep the job ID. Start a fresh agreement."];
+ Cancelled [label="Cancelled job\nHistory retained"];
+ Eligible [shape=diamond, label="Funding attempt\nor financial close?", fillcolor="#f8fafc"];
+ Terminal [label="Do not reopen\nReconcile, or create\na new linked job", fillcolor="#fee2e2", color="#dc2626"];
+ Approvals [shape=diamond, label="Worker declined or\nboth had accepted?", fillcolor="#f8fafc"];
+ Both [label="Both parties\napprove reopening", fillcolor="#dbeafe", color="#2563eb"];
+ Requester [label="Requester approves\nearly cancellation", fillcolor="#dbeafe", color="#2563eb"];
+ New [label="Same ID; new epoch\nClear old agreement", fillcolor="#dcfce7", color="#16a34a"];
+ Fresh [label="Fresh quote; both accept\nUse current expected_epoch\nReject stale requests", fillcolor="#dcfce7", color="#16a34a"];
+ Cancelled -> Eligible;
+ Eligible -> Terminal [label="Yes"];
+ Eligible -> Approvals [label="No"];
+ Approvals -> Both [label="Yes"];
+ Approvals -> Requester [label="No"];
+ Both -> New;
+ Requester -> New;
+ New -> Fresh;
+}
