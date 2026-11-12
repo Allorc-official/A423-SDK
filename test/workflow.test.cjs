@@ -95,3 +95,49 @@ test('typed workflow client talks to handler and exposes workflow ESM exports', 
   assert.equal((await c.get('one')).id,'one');assert.equal((await c.receipts('one')).job_id,'one');
   assert.equal((await c.reconcile('one')).state,'quoted');
 });
+test('worker decline retains job ID and history; neither agent can keep quoting a cancelled job',async()=>{
+ const w=setup();await draft(w);const job=await act(w,'decline','seller',{reason:'Budget too low'});
+ assert.equal(job.id,'one');assert.equal(job.state,'cancelled');assert.equal(job.pre_funding_cancellations[0].actor_id,'seller');
+ await assert.rejects(act(w,'quote','buyer',{terms:{amount:'10'}}),{code:'INVALID_STATE'});
+ await assert.rejects(act(w,'decline','reviewer',{},'wrong-role'),{code:'FORBIDDEN'});
+ await assert.rejects(w.create({id:'one',participants},'buyer'),{code:'CONFLICT'});
+});
+test('worker-declined draft needs worker and requester reopening approval; stale requests cannot revive old terms',async()=>{
+ const w=setup();await draft(w);let j=await act(w,'quote','seller',{terms:{amount:'100'}});const old=j.agreement;
+ j=await act(w,'decline','seller',{});const input={cancellation_id:j.pre_funding_cancellations[0].id};
+ await assert.rejects(act(w,'reopen','buyer',{cancellation_id:'wrong'}),{code:'CANCELLATION_MISMATCH'});
+ j=await act(w,'reopen','buyer',input,'reopen-buyer');assert.equal(j.state,'cancelled');
+ j=await act(w,'reopen','seller',input,'reopen-worker');assert.equal(j.state,'draft');assert.equal(j.epoch,1);assert.equal(j.agreement,null);
+ await assert.rejects(act(w,'quote','seller',{terms:{amount:'100'}},'stale-quote'),{code:'STALE_EPOCH'});
+ j=await act(w,'quote','seller',{terms:{amount:'100'},expected_epoch:1},'new-quote');assert.equal(j.agreement.revision,2);assert.notEqual(j.agreement.hash,old.hash);assert.deepEqual(j.agreement.accepted_by,[]);
+ await assert.rejects(act(w,'accept','buyer',{agreement_hash:old.hash,revision:old.revision,expected_epoch:1},'old-accept'),{code:'AGREEMENT_MISMATCH'});
+ await assert.rejects(act(w,'cancel','buyer',{},'delayed-cancel'),{code:'STALE_EPOCH'});
+ await assert.rejects(act(w,'reopen','buyer',input,'another-reopen'),{code:'INVALID_STATE'});
+ assert.equal(j.pre_funding_cancellations.length,1);
+});
+test('requester cancellation before acceptance reopens directly; bilateral acceptance requires both parties',async()=>{
+ for(const stage of ['draft','partial','accepted']){
+ const w=setup();let j;
+ if(stage==='accepted')j=await accepted(w);else{await draft(w);if(stage==='partial'){j=await act(w,'quote','seller',{terms:{amount:'100'}});await act(w,'accept','buyer',{agreement_hash:j.agreement.hash,revision:1});}}
+ j=await act(w,'cancel','buyer',{});const input={cancellation_id:j.pre_funding_cancellations[0].id};
+ j=await act(w,'reopen','buyer',input);assert.equal(j.state,stage==='accepted'?'cancelled':'draft');
+ if(stage==='accepted'){j=await act(w,'reopen','seller',input);assert.equal(j.state,'draft');}
+ assert.equal(j.epoch,1);assert.equal(j.agreement,null);
+ const version=j.version;j=await act(w,'reopen','buyer',input);assert.equal(j.version,version);
+ }
+});
+test('funding pending, rejected or completed prevents prefunding cancellation and reopening',async()=>{
+ for(const status of ['pending','rejected','confirmed']){
+ const w=setup({adapters:{fund:async()=>({status,evidence:{reference:'fund'}})}});await accepted(w);await act(w,'fund','buyer');
+ await assert.rejects(act(w,'decline','seller'),{code:status==='pending'?'OPERATION_PENDING':status==='rejected'?'FUNDING_STARTED':'INVALID_STATE'});
+ await assert.rejects(act(w,'cancel','buyer'),{code:status==='pending'?'OPERATION_PENDING':status==='rejected'?'FUNDING_STARTED':'INVALID_STATE'});
+ }
+});
+test('repeated cancellation/reopen cycles keep monotonically increasing quote revisions and unique cancellation IDs',async()=>{
+ const w=setup();await draft(w);let prior=null;
+ for(let epoch=0;epoch<3;epoch++){
+ let j=await act(w,'quote','buyer',{terms:{amount:'100'},expected_epoch:epoch},'quote-'+epoch);assert.equal(j.agreement.revision,epoch+1);
+ j=await act(w,'cancel','buyer',{expected_epoch:epoch},'cancel-'+epoch);const id=j.pre_funding_cancellations.at(-1).id;assert.notEqual(id,prior);prior=id;
+ j=await act(w,'reopen','buyer',{cancellation_id:id},'reopen-'+epoch);assert.equal(j.epoch,epoch+1);assert.equal(j.pre_funding_cancellations.length,epoch+1);
+ }
+});

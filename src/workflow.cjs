@@ -24,6 +24,8 @@ const RULES = {
   verify: { from: ['submitted'], roles: ['verifier'], to: 'verified', effect: true },
   release: { from: ['verified'], roles: ['verifier'], to: 'paid', effect: true },
   refund: { from: ['funded', 'running'], roles: ['requester'], to: 'refunded', effect: true },
+  decline: { from: ['draft', 'quoted', 'accepted'], roles: ['worker'], to: 'cancelled' },
+  reopen: { from: ['cancelled'], roles: ['requester', 'worker'], to: 'draft' },
   cancel: { from: ['draft', 'quoted', 'accepted'], roles: ['requester'], to: 'cancelled' },
   expire: { from: ['draft', 'quoted', 'accepted'], roles: ['requester', 'worker'], to: 'expired', effect: true },
   dispute: { from: ['submitted', 'verified'], roles: ['requester', 'worker', 'verifier'], to: 'disputed' },
@@ -126,7 +128,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       if (participants.requester === participants.worker || actor !== participants.requester) error('FORBIDDEN', 'Requester must create the job and differ from worker', 403);
       canonical(metadata); canonical(participants);
       const at = stamp();
-      const job = { subflows:[],active_subflow_id:null,work_status:'not_started',negotiation:null,escrow_ledger:null,id, protocol: 'a423.workflow.v1', version: 1, state: 'draft', participants: copy(participants), metadata: copy(metadata), agreement: null, submission: null, pending: null, operations: {}, evidence: [], events: [{ sequence: 1, type: 'created', actor_id: actor, at, data: {} }], created_at: at, updated_at: at };
+      const job = { epoch:0,agreement_revision:0,pre_funding_cancellations:[],subflows:[],active_subflow_id:null,work_status:'not_started',negotiation:null,escrow_ledger:null,id, protocol: 'a423.workflow.v1', version: 1, state: 'draft', participants: copy(participants), metadata: copy(metadata), agreement: null, submission: null, pending: null, operations: {}, evidence: [], events: [{ sequence: 1, type: 'created', actor_id: actor, at, data: {} }], created_at: at, updated_at: at };
       if (authorize && await authorize({ job: copy(job), action: 'create', actor, input: {} }) !== true) error('FORBIDDEN', 'Application policy rejected creation', 403);
       if (!await store.create(job)) error('CONFLICT', 'Job ID already exists');
       return copy(job);
@@ -156,10 +158,30 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       if(action==='approve_cancellation'&&cancellation?.instruction){const candidate=require('./cancellation.cjs').createCancellationInstruction(job,input);if(input.expected_revision!==job.negotiation.current.escrow_version||input.proposal_hash!==job.negotiation.current.proposal_hash||hashAgreement(candidate)!==hashAgreement(cancellation.instruction))error('CANCELLATION_CONFLICT','Another instruction is already accepted',409);return job;}
       if (!rule.from.includes(job.state)) error('INVALID_STATE', `Cannot ${action} from ${job.state}`);
       let next = copy(job);
+      const fundingStarted=Object.values(job.operations).some(op=>op.result?.evidence?.event==='Funded') || job.evidence.some(e=>e.action==='fund') || job.events.some(e=>e.type==='fund.requested') || !!job.escrow_ledger;
+      if(['cancel','decline','reopen'].includes(action)&&fundingStarted)error('FUNDING_STARTED','Funding activity must be reconciled and closed; this job cannot be reopened',409);
+      if((job.epoch||0)>0&&['quote','accept','fund','cancel','decline'].includes(action)&&input?.expected_epoch!==job.epoch)error('STALE_EPOCH','Reload the job and supply its current expected_epoch',409);
+      if(['cancel','decline'].includes(action)){
+        if(input?.reason!==undefined&&(typeof input.reason!=='string'||!input.reason.trim()||input.reason.length>4000))error('INVALID_INPUT','Cancellation reason must be nonempty text, at most 4000 characters',400);
+        const record={id:randomUUID(),epoch:job.epoch||0,action,actor_id:actor,prior_state:job.state,accepted_by:copy(job.agreement?.accepted_by||[]),agreement:copy(job.agreement),reason:input?.reason||null,at:stamp(),reopen_approvals:[],reopened_at:null};
+        next.pre_funding_cancellations=[...(job.pre_funding_cancellations||[]),record];next.work_status='stopped';
+      }
+      if(action==='reopen'){
+        const history=copy(job.pre_funding_cancellations||[]),record=history.at(-1);
+        if(!record||record.reopened_at||input?.cancellation_id!==record.id)error('CANCELLATION_MISMATCH','Supply the current pre-funding cancellation_id',409);
+        const required=[...new Set([job.participants.requester,record.actor_id,...([job.participants.requester,job.participants.worker].every(id=>record.accepted_by.includes(id))?[job.participants.worker]:[])])];
+        if(!required.includes(actor))error('FORBIDDEN','This actor is not a required reopening approver',403);
+        record.reopen_approvals=[...new Set([...record.reopen_approvals,actor])];next.pre_funding_cancellations=history;
+        if(!required.every(id=>record.reopen_approvals.includes(id))){next.operations[key]={request_hash:requestHash,status:'confirmed',result:{status:'confirmed'}};return save(job,next,'reopen.approved',actor,{cancellation_id:record.id,required_approvers:required});}
+        record.reopened_at=stamp();next.epoch=(job.epoch||0)+1;next.agreement_revision=Math.max(job.agreement_revision||0,job.agreement?.revision||0);next.agreement=null;next.work_status='not_started';
+      }
       if (action === 'quote') {
         if (!input || !input.terms || typeof input.terms !== 'object' || Array.isArray(input.terms)) error('INVALID_INPUT', 'Supply a terms object', 400);
         if (validateTerms) await validateTerms(copy(input.terms));
-        next.agreement = { revision: (job.agreement?.revision || 0) + 1, terms: copy(input.terms), hash: hashAgreement(input.terms), accepted_by: [] };
+        const terms=copy(input.terms);
+        if((job.epoch||0)>0)terms._a423_reopen={job_id:job.id,epoch:job.epoch};
+        next.agreement_revision=Math.max(job.agreement_revision||0,job.agreement?.revision||0)+1;
+        next.agreement = { revision: next.agreement_revision, terms, hash: hashAgreement(terms), accepted_by: [] };
       }
       if (action === 'accept') {
         if (!input || input.agreement_hash !== job.agreement.hash || input.revision !== job.agreement.revision) error('AGREEMENT_MISMATCH', 'Accept the current agreement hash and revision');
@@ -202,7 +224,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
     },
     async receipts(id, actor) {
       const job = await get(id, actor);
-      return { protocol: job.protocol, job_id: id, state: job.state, agreement: job.agreement, submission: job.submission, subflows:job.subflows||[],active_subflow_id:job.active_subflow_id||null,work_status:job.work_status,negotiation:job.negotiation,escrow_ledger:job.escrow_ledger,evidence: job.evidence, events: job.events, pending: job.pending };
+      return { epoch:job.epoch||0,pre_funding_cancellations:job.pre_funding_cancellations||[],protocol: job.protocol, job_id: id, state: job.state, agreement: job.agreement, submission: job.submission, subflows:job.subflows||[],active_subflow_id:job.active_subflow_id||null,work_status:job.work_status,negotiation:job.negotiation,escrow_ledger:job.escrow_ledger,evidence: job.evidence, events: job.events, pending: job.pending };
     }
   };
   return workflow;

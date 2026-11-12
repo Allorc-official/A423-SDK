@@ -68,3 +68,37 @@ The SDK blocks counters after instruction acceptance. External transactions can 
 The legacy `accept_settlement` action remains available for a direct counterparty transaction or dual-signature relay. It can produce a final receipt without a separately saved accepted instruction. Use the new staged flow when the UI needs acceptance before execution.
 
 Amounts use raw integer token units, never floating point. Signatures and claims are public authorization material, not private keys. Persist records securely and avoid exposing participant-specific endpoints without authentication. Pure JSON constructors validate structure/binding; they do not independently prove cryptographic consent or chain finality. The reference adapters perform those checks. No live-chain deployment, external app migration or independent security audit is implied.
+
+## Pre-funding decline and reopening — 0.7
+
+Before funding, the requester can `cancel` and the worker can `decline` from `draft`, `quoted` or `accepted`. Both close the parent job as `cancelled`; neither deletes it. A quote sent afterward is rejected. No token refund or payment receipt is issued because this path has not taken custody of funds. The normal job event and `pre_funding_cancellations` record document the cancellation.
+
+Each cancellation record has a unique `id`, cancelling actor/action/reason, prior state/agreement/acceptances, generation (`epoch`), reopening approvals and reopening timestamp. Participants can read it through the existing job/client GET API. A cancelled job ID cannot be created again or removed through ordinary protocol actions.
+
+```js
+let job = await workflow.act(id, 'decline', {
+  reason: 'Cannot meet the proposed budget',
+  expected_epoch: currentJob.epoch || 0,
+}, {actor: workerId, idempotencyKey: 'decline-1'});
+
+const cancellation_id = job.pre_funding_cancellations.at(-1).id;
+job = await workflow.act(id, 'reopen', {cancellation_id}, {
+  actor: payerId, idempotencyKey: 'reopen-payer-1'
+});
+// If worker declined, the worker must also explicitly approve reopening.
+job = await workflow.act(id, 'reopen', {cancellation_id}, {
+  actor: workerId, idempotencyKey: 'reopen-worker-1'
+});
+```
+
+Required reopening approvers are the requester and the cancelling party. When both had already accepted the agreement, both must approve regardless of who cancelled. Until all required approvals are present, the job remains `cancelled`. An observer/verifier cannot reopen it. A requester cancellation before bilateral acceptance can therefore be reopened by the requester alone; subsequent participation still requires fresh agreement. Application authorization policies apply to every approval.
+
+When reopened, the same job returns to `draft`, the active agreement is cleared, `epoch` increments, and history/idempotency records remain. No old acceptance is restored. The next quote uses a higher agreement revision even when the textual terms are unchanged; its canonical terms include the reserved `_a423_reopen: {job_id, epoch}` field, changing the agreement hash and wallet-signature payload. Hash and sign the returned agreement. Validators must tolerate this SDK-owned top-level field.
+
+After reopening, `quote`, `accept`, `fund`, `cancel` and `decline` require `input.expected_epoch === job.epoch`. This rejects delayed requests from prior negotiations. Existing idempotency keys remain bound to their original requests: an old completed request may return the current record but will not execute again. Use fresh keys for a new negotiation generation. Reopening requires the exact current `cancellation_id`; an old cancellation cannot reopen a later one.
+
+The generic HTTP handler and typed client's `act` method support both actions. Chat tools expose `decline_job` and `reopen_job`; the reference dashboard exposes the same actions and history. Existing cancelled records without a pre-funding cancellation record remain terminal; no historical approval is fabricated.
+
+Any funding attempt (`fund.requested`), pending operation, funding evidence or escrow ledger blocks this reopening path, even if a funding attempt was rejected. This is deliberately conservative because a signed/broadcast transaction may exist outside a cached state. Use reconciliation and escrow exits instead. Paid, refunded and settled jobs remain terminal; repeating that work needs a new job ID linked by application metadata.
+
+This is off-chain workflow cancellation, not on-chain revocation of a previously issued signature. Already shared worker-consent signatures retain their original contract-defined validity; an external payer could still try to fund the old agreement. Reopening changes the new agreement commitment and prevents using an old signature for the new agreement, but cannot erase an old signature. Any external old-agreement funding must be reconciled and handled under its original on-chain terms; do not display it as new-generation custody. Hard revocation before external funding would require an additional on-chain nonce/revocation protocol and deployment, which this release does not add.

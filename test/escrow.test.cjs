@@ -354,3 +354,14 @@ test('cancellation subflow: crash after escrow execution recovers one receipt wi
  const job=await f.w.reconcile(f.id,'buyer');assert.equal(job.subflows[0].status,'completed');const receipt=await f.w.cancellationReceipt(f.id,'buyer');assert.equal(receipt.instruction_id,instruction.id);
  await f.w.reconcile(f.id,'buyer');assert.equal(await token.balanceOf(wallets[1].address),before+30n);assert.equal((await f.w.cancellationReceipt(f.id,'buyer')).id,receipt.id);
 });
+test('reopened job: fresh agreement binds wallet consent; an old consent cannot fund the new generation',async()=>{
+ const f=await fixture('reopen_consent');const old=await f.w.get(f.id,'buyer');
+ let job=await f.act('decline','worker',{reason:'Budget negotiation stopped'});const cancellation_id=job.pre_funding_cancellations.at(-1).id;
+ await f.act('reopen','buyer',{cancellation_id},'reopen-buyer');job=await f.act('reopen','worker',{cancellation_id},'reopen-worker');assert.equal(job.epoch,1);
+ job=await f.act('quote','worker',{terms:f.terms,expected_epoch:1},'new-quote');assert.notEqual(job.agreement.hash,old.agreement.hash);assert.equal(job.agreement.revision,2);
+ const acceptance={agreement_hash:job.agreement.hash,revision:2,expected_epoch:1};await f.act('accept','buyer',acceptance,'new-accept-buyer');job=await f.act('accept','worker',acceptance,'new-accept-worker');
+ job=await f.act('fund','buyer',{worker_signature:f.signature,expected_epoch:1},'old-consent');assert.equal(job.state,'accepted');assert.equal(Number((await escrow.getJob(f.consent.value.jobId)).state),0);
+ const consent=workerConsent(job,config),signature=await wallets[1].signTypedData(consent.domain,consent.types,consent.value);
+ job=await f.act('fund','buyer',{worker_signature:signature,expected_epoch:1},'fresh-consent');assert.equal(job.state,'funded');assert.equal(job.escrow_ledger.locked_amount,'100');
+ await advance(101);await f.act('refund','buyer');
+});

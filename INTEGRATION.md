@@ -1,3 +1,7 @@
+# Pre-funding decline and reopening in 0.7
+
+New actions: `decline` (worker) and `reopen` (required participants). Preserve the job ID, inspect `pre_funding_cancellations`, and supply `cancellation_id` when reopening. After reopening, supply `expected_epoch` for quote/accept/fund/cancel/decline. A fresh quote includes a reserved `_a423_reopen` commitment in its terms; sign/hash the returned agreement, not the original input. See [CANCELLATION.md](./CANCELLATION.md#pre-funding-decline-and-reopening--07).
+
 # Cancellation subflows in 0.6
 
 Use `workflow.acceptCancellation` or `POST /api/a423/jobs/:id/cancellation/accept` with both wallet signatures. Acceptance is persisted before forwarding; show the subflow status and issue the final receipt only after confirmation. See [CANCELLATION.md](./CANCELLATION.md) for routes, retry behavior and migration. The actual remote application is not modified by installing this package.
@@ -17,7 +21,7 @@ The remote MVP was not available in the SDK workspace; these utilities do not im
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.6.0
+npm install @allorc/a423-sdk@0.7.0
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.

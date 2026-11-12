@@ -19,7 +19,9 @@ export interface CancellationSubflow {
  id: string;kind: 'cancellation';parent_job_id: string;status: 'proposal_pending'|'proposal_rejected'|'negotiating'|'acceptance_pending'|'accepted'|'execution_pending'|'execution_failed'|'completed'|'disputed';started_at: string;updated_at: string;proposal_revision: number;instruction: CancellationInstruction | null;receipt: CancellationReceipt | null;events: Array<{sequence: number;type: string;actor_id: string;at: string;data: Json}>;accepted_at?: string;approved_by?: string[];completed_at?: string;execution_reference?: string | null;closing_action?: string;last_error?: string | null;
 }
 export interface CancellationApproval {expected_revision: number;proposal_hash: string;payer_signature: string;worker_signature: string}
+export interface PreFundingCancellation {id: string;epoch: number;action: 'cancel'|'decline';actor_id: string;prior_state: string;accepted_by: string[];agreement: Agreement | null;reason: string | null;at: string;reopen_approvals: string[];reopened_at: string | null}
 export interface WorkflowJob {
+  epoch?: number;agreement_revision?: number;pre_funding_cancellations?: PreFundingCancellation[];
   subflows?: CancellationSubflow[];active_subflow_id?: string | null;
   work_status?: string;negotiation?: Negotiation | null;escrow_ledger?: EscrowLedger | null;
   id: string; protocol: 'a423.workflow.v1'; version: number; state: string;
@@ -61,7 +63,7 @@ export interface Workflow {
   cancellationInstruction(id: string, actor: string): Promise<CancellationInstruction>;
   cancellationReceipt(id: string, actor: string): Promise<CancellationReceipt>;
   acceptCancellation(id: string,input: CancellationApproval,options: {actor: string;idempotencyKey: string;forward?: boolean}): Promise<WorkflowJob>;
-  receipts(id: string, actor: string): Promise<Pick<WorkflowJob, 'protocol' | 'state' | 'agreement' | 'submission' | 'evidence' | 'events' | 'pending' | 'work_status' | 'negotiation' | 'escrow_ledger' | 'subflows' | 'active_subflow_id'> & { job_id: string }>;
+  receipts(id: string, actor: string): Promise<Pick<WorkflowJob, 'epoch' | 'pre_funding_cancellations' | 'protocol' | 'state' | 'agreement' | 'submission' | 'evidence' | 'events' | 'pending' | 'work_status' | 'negotiation' | 'escrow_ledger' | 'subflows' | 'active_subflow_id'> & { job_id: string }>;
 }
 export function hashAgreement(terms: Json): string;
 export function createWorkflow(options: WorkflowOptions): Workflow;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Add worker `decline` before funding, with retained cancellation IDs, reasons, prior agreements and actor history.
+- Add explicit `reopen` approvals: requester plus cancelling party, and both parties after bilateral acceptance.
+- Preserve the job ID, clear the active agreement, monotonically advance quote revisions, and bind new agreements to a reopening generation.
+- Reject stale-generation quote/accept/fund/cancel/decline requests and any pre-funding cancellation after funding has been attempted.
+- Add chat actions, dashboard controls and regression coverage. No contract changes or external signature-revocation claim.
+
 ## 0.6.0
 
 - Add a persisted cancellation child flow with proposal, acceptance, escrow execution and confirmed receipt stages.
