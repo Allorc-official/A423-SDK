@@ -1,0 +1,31 @@
+{
+  "title": "A423 architecture",
+  "subtitle": "A layered capability map. The job process defines execution order.",
+  "layers": [
+    {"label":"01  ENTRY POINTS","cards":[
+      {"title":"People","lines":["Create and review jobs","Approve wallet actions"]},
+      {"title":"AI agents","lines":["Negotiate and use tools","Act with credentials"]},
+      {"title":"Application UI","lines":["Show job progress","Display actual receipts"]}
+    ]},
+    {"label":"02  YOUR BACKEND","cards":[
+      {"title":"Identity and access","lines":["Enroll agents","Authenticate callers"]},
+      {"title":"A423 workflow","lines":["Version agreements","Enforce roles and states"]},
+      {"title":"Private durable state","lines":["Jobs, queue and journal","Costs and approvals"]}
+    ]},
+    {"label":"03  SDK SAFETY AND POLICY","cards":[
+      {"title":"Optional profit policy","lines":["Freeze the cost basis","Apply configured limits"]},
+      {"title":"Escrow adapters","lines":["Check chain evidence","Gate eligible actions"]},
+      {"title":"Transaction safety","lines":["Approve and journal","Reconcile uncertain results"]}
+    ]},
+    {"label":"04  CONNECTED SYSTEMS","cards":[
+      {"title":"Your work runner","lines":["Perform the actual task","Commit the artifact hash"]},
+      {"title":"RPC provider","lines":["Use the selected network","Read and send transactions"]},
+      {"title":"Escrow contract","lines":["HOLD LOCKED TOKENS","Enforce payout and refund"]}
+    ]},
+    {"label":"05  OBSERVABLE RESULTS","cards":[
+      {"title":"Job projections","lines":["Current workflow status","Role-aware economics"]},
+      {"title":"Fresh receipts","lines":["Confirmed allocations","No payment claim before confirmation"]}
+    ]}
+  ],
+  "footer":"The SDK coordinates the process. The deployed contract holds funds. Your application runs the work."
+}

@@ -1,0 +1,35 @@
+{
+  "title":"A423 cancellation swimlane",
+  "subtitle":"Read columns left to right. Rows show who is responsible at each phase.",
+  "phases":["Negotiate","Approve","Execute","Confirm"],
+  "lanes":[
+    {"name":["Payer +","worker"],"cells":[
+      ["Propose / counter split","Public work claims"],
+      ["Both sign exact terms","Use current revision"],
+      ["Authorize execution","Use saved instruction"],
+      ["Review actual amounts","Check the fresh receipt"]
+    ]},
+    {"name":["SDK","backend"],"cells":[
+      ["Freeze private costs *","Check caps and revision"],
+      ["Verify signatures","Save accepted JSON"],
+      ["Journal the signed call","Send and reconcile"],
+      ["Validate chain evidence","Issue final receipt"]
+    ]},
+    {"name":["Escrow","contract"],"cells":[
+      ["Record proposal revision","Pause ordinary actions"],
+      ["Funds remain locked","JSON moves no funds"],
+      ["Validate signed split","Transfer + emit events"],
+      ["Allocation recorded","No second transfer"]
+    ]}
+  ],
+  "records":[
+    {"title":"Accepted instruction","lines":["A saved authorization record.","It does not prove that funds moved."]},
+    {"title":"Confirmed final receipt","lines":["Evidence of actual payout and refund.","The closing ledger has zero locked funds."]}
+  ],
+  "exceptions":[
+    "Counteroffer: repeat negotiation with a new revision and fresh consent.",
+    "Disagreement: use supported arbitration or the original eligible deadline exit.",
+    "Pending / failed execution: no final payment receipt; reconcile or recover safely."
+  ],
+  "footer":"* Profit policy is optional. Cost and margin calculations stay off-chain and private."
+}

@@ -32,9 +32,9 @@ A423 is a backend SDK for agent-to-agent, human-to-agent and agent-to-human jobs
 
 Diagrams are provided as ordinary PNG images, with zoomable SVGs and editable sources in [docs/diagrams](./docs/diagrams/README.md). No Mermaid support is required.
 
-![A423 architecture: application backend, SDK services, RPC and on-chain escrow custody](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/architecture.png)
+![A423 layered architecture: entry points, backend, SDK capabilities, connected systems and results](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/architecture.png?v=2)
 
-[Open PNG](./docs/diagrams/architecture.png) · [Zoomable SVG](./docs/diagrams/architecture.svg) · [Editable source](./docs/diagrams/architecture.dot)
+[Open PNG](./docs/diagrams/architecture.png) · [Zoomable SVG](./docs/diagrams/architecture.svg) · [Editable source](./docs/diagrams/architecture.json)
 
 | Component | Responsibility |
 |---|---|
@@ -333,11 +333,11 @@ Quotes receive a canonical agreement hash and monotonic revision. Both parties a
 
 ## End-to-end job lifecycle
 
-![A423 primary job states: agreement, funding, completion, disputes, closing settlement and refunds](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/job-lifecycle.png)
+![A423 phased job process with a separate table of exception routes](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/job-lifecycle.png?v=2)
 
-[Open PNG](./docs/diagrams/job-lifecycle.png) · [Zoomable SVG](./docs/diagrams/job-lifecycle.svg) · [Editable source](./docs/diagrams/job-lifecycle.dot)
+[Open PNG](./docs/diagrams/job-lifecycle.png) · [Zoomable SVG](./docs/diagrams/job-lifecycle.svg) · [Editable source](./docs/diagrams/job-lifecycle.json)
 
-The chart shows common completion and dispute paths; funded/running jobs also support direct disputes and closing negotiation.
+The primary path and exception routes are shown separately. The action table below defines the required actors and evidence; funded/running jobs also support direct disputes and closing negotiation.
 
 Use `workflow.act(id, action, input, {actor, idempotencyKey})`, or the authenticated client/HTTP equivalent. **Proceed to the next action only when `job.pending` is null and the expected state/evidence is present.**
 
@@ -371,9 +371,9 @@ const workerSignature = await workerWallet.signTypedData(
 
 After funding, ordinary `cancel` cannot simply unlock the money. Instead negotiate a **closing settlement**: worker compensation for agreed partial work/expenses, with the remainder refunded. This closes the entire job; it is not a continuing-work milestone payment.
 
-![A423 cancellation: counteroffers, signed JSON instruction, escrow execution and confirmed receipt](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/cancellation.png)
+![A423 cancellation swimlane: payer and worker, SDK backend, escrow contract](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/cancellation.png?v=2)
 
-[Open PNG](./docs/diagrams/cancellation.png) · [Zoomable SVG](./docs/diagrams/cancellation.svg) · [Editable source](./docs/diagrams/cancellation.dot)
+[Open PNG](./docs/diagrams/cancellation.png) · [Zoomable SVG](./docs/diagrams/cancellation.svg) · [Editable source](./docs/diagrams/cancellation.json)
 
 For a funded 100-unit job, an agreed worker allocation of 30 means **30 to the worker, 70 to the payer**, once confirmed. JSON is an instruction artifact; the contract validates typed signatures and amounts, not arbitrary JSON.
 
@@ -418,9 +418,9 @@ If parties disagree, original deadline exits and supported arbitration remain av
 
 Cancelled jobs keep their IDs and history. The requester uses `cancel`; the worker uses `decline`. Both are allowed from `draft`, `quoted` or `accepted`, **only before an SDK funding attempt**. Further quotes/acceptance are rejected until explicit eligible reopening.
 
-![A423 controlled reopening: funding eligibility, required approvals and a fresh agreement](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/reopening.png)
+![A423 reopening decision table and fresh agreement steps](https://raw.githubusercontent.com/Allorc-official/A423-SDK/main/docs/diagrams/reopening.png?v=2)
 
-[Open PNG](./docs/diagrams/reopening.png) · [Zoomable SVG](./docs/diagrams/reopening.svg) · [Editable source](./docs/diagrams/reopening.dot)
+[Open PNG](./docs/diagrams/reopening.png) · [Zoomable SVG](./docs/diagrams/reopening.svg) · [Editable source](./docs/diagrams/reopening.json)
 
 ```js
 let job = await app.workflow.act(id, 'decline', {

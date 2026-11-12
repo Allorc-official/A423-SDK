@@ -1,0 +1,22 @@
+{
+  "title":"A423 reopening rules",
+  "subtitle":"Use a decision table, not a branching graph. Every path preserves the original history.",
+  "headers":["Current situation","Required approval","What happens next"],
+  "rows":[
+    [["Funding attempted, or","job already financially closed"],["Not eligible for reopening"],["Reconcile financial activity","or create a new linked job."]],
+    [["Requester cancelled before","both parties had accepted"],["Requester"],["Reopen the same job ID."]],
+    [["Worker declined the job"],["Requester + worker"],["Reopen the same job ID."]],
+    [["Both had accepted before","the job was cancelled"],["Requester + worker"],["Reopen the same job ID."]],
+    [["Old cancelled record lacks","a supported cancellation record"],["No automatic reopening"],["Keep the historical record","terminal; review migration."]]
+  ],
+  "steps":[
+    {"title":"Keep the ID","lines":["Preserve job history","Keep past records."]},
+    {"title":"New generation","lines":["Increment epoch.","Clear active agreement."]},
+    {"title":"Fresh quote","lines":["Use a higher revision","New agreement hash."]},
+    {"title":"Both accept","lines":["Collect new approvals.","Never restore old ones."]}
+  ],
+  "footnotes":[
+    "Reopen using the exact cancellation_id. No reopening after payout, refund or settlement.",
+    "After reopening, quote / accept / fund / cancel / decline must use the current expected_epoch."
+  ]
+}

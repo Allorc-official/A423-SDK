@@ -1,0 +1,21 @@
+{
+  "title":"A423 job process",
+  "subtitle":"Read the primary path left to right. Exceptions are listed separately below.",
+  "phases":[
+    {"title":"Agreement","states":["draft","quoted","accepted"],"notes":["Both parties approve","the exact revision","and agreement hash."]},
+    {"title":"Funding","states":["funded"],"notes":["Worker wallet consents.","Payer authorizes funding.","Confirm on-chain custody."]},
+    {"title":"Delivery","states":["running","submitted","verified"],"notes":["Run the task.","Commit the artifact.","Validate the result."]},
+    {"title":"Payment","states":["paid"],"notes":["Verifier releases funds.","Confirm worker payout.","Read a fresh receipt."]}
+  ],
+  "headers":["When","Action","Resulting state"],
+  "routes":[
+    [["Before a funding attempt"],["Cancel or decline"],["cancelled; history retained"]],
+    [["Eligible cancelled job"],["Collect reopening approvals"],["draft; fresh generation"]],
+    [["After funding; need to stop"],["Propose a closing split"],["settlement_negotiation"]],
+    [["Unsubmitted and expired"],["Execute an eligible refund"],["refunded or settled *"]],
+    [["Disagreement after funding"],["Dispute, then resolve"],["disputed, then settled"]],
+    [["Submitted; timeout eligible"],["Execute agreed timeout"],["settled; actual allocation"]],
+    [["Unfunded terms expired"],["expire, if configured"],["expired"]]
+  ],
+  "footnotes":["Financial states require confirmed chain evidence; pending is not a completed payment.","* The parent state depends on whether refund or timeout was used for the expiry exit."]
+}

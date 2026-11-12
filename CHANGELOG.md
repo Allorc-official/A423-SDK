@@ -2,6 +2,8 @@
 
 ## Unreleased documentation
 
+- Redesign all four visuals as fixed layers, a phased process with an exception table, a responsibility swimlane and a reopening decision table. Remove crossed graph routes and retain editable JSON sources.
+
 - Replace Mermaid-only README blocks with pre-rendered PNG images, zoomable SVGs and editable diagram sources; include documentation assets in the package.
 
 - Rewrite the README around installation/version checks, initialization argument definitions, typed job fields, end-to-end action tables and Mermaid process maps.

@@ -1,26 +1,26 @@
-# A423 diagram images
+# A423 visual guides
 
-These are pre-rendered documentation images. Reading the main README needs no Mermaid renderer, JavaScript or diagram dependency. PNGs work in ordinary Markdown/image viewers; SVGs remain sharp when zoomed.
+Each subject uses a format suited to the question being answered. The diagrams use a fixed grid, aligned text and short straight connectors. Exceptions and eligibility rules stay in tables rather than crossing the main process with branch lines.
 
-| Image | Explains |
-|---|---|
-| [Architecture PNG](./architecture.png) / [SVG](./architecture.svg) | Application backend, SDK, private policy/storage, RPC and escrow custody |
-| [Job lifecycle PNG](./job-lifecycle.png) / [SVG](./job-lifecycle.svg) | Primary job states, funding, completion, dispute, closing and refund paths |
-| [Cancellation PNG](./cancellation.png) / [SVG](./cancellation.svg) | Counteroffers, signed acceptance, saved JSON, execution, confirmation and receipts |
-| [Reopening PNG](./reopening.png) / [SVG](./reopening.svg) | Pre-funding eligibility, required approvals, fresh generation and agreement |
+| Image | Format | Question answered |
+|---|---|---|
+| [Architecture PNG](./architecture.png) / [SVG](./architecture.svg) | Layered capability map | What does each part of the stack do? |
+| [Job process PNG](./job-lifecycle.png) / [SVG](./job-lifecycle.svg) | Four process phases plus exception matrix | What is the normal path, and what changes in an exception? |
+| [Cancellation PNG](./cancellation.png) / [SVG](./cancellation.svg) | Responsibility swimlane | What do the parties, SDK and contract do at each phase? |
+| [Reopening PNG](./reopening.png) / [SVG](./reopening.svg) | Decision table plus fresh-agreement steps | Who must approve, and when is reopening prohibited? |
 
-The state chart shows primary paths; the [README action tables](../../README.md) and implementation define exact roles, deadlines, generation/revision guards and pending-operation restrictions. The cancellation diagram shows the staged dual-signature path, not the legacy direct-counterparty shortcut. A receipt follows actual confirmed transfers, not mere acceptance or broadcast.
+The architecture is a capability map, not a literal call sequence. The process view groups primary job states; the [README action tables](../../README.md) and implementation define exact roles, deadlines, generation/revision guards and pending-operation restrictions. The cancellation swimlane depicts the staged dual-signature path, not the legacy counterparty shortcut. A final receipt requires confirmed transfer evidence.
 
 ## Editing and regeneration
 
-Edit the matching `.dot` source, then regenerate the SVG and PNG together. These rendering packages are documentation tools, not SDK runtime dependencies:
+Edit the matching `.json` content source. Layouts are defined in [render.mjs](./render.mjs), which produces self-contained SVG and 2200-pixel-wide PNG images. The renderer uses explicit coordinates and aligned tables; there is no automatic graph routing, browser or chain connection.
 
 ```sh
-# From the source repository. Keep these tools out of package.json/package-lock.json.
-npm install --no-save --package-lock=false --ignore-scripts @viz-js/viz@3.31.0 @resvg/resvg-js@2.6.2
+# Documentation tool only; do not change SDK runtime dependencies or the lockfile.
+npm install --no-save --package-lock=false --ignore-scripts @resvg/resvg-js@2.6.2
 node docs/diagrams/render.mjs
 ```
 
-The renderer uses Graphviz's CPU/WASM layout and a local SVG-to-PNG renderer; it needs no browser or chain connection. Use DejaVu Sans or an appropriate installed sans-serif font. Inspect every PNG after changing labels or routes. PNG width is 2200 pixels; SVG retains vector text/paths.
+Use DejaVu Sans or an appropriate installed sans-serif font. Check text widths, row/card padding and all four PNGs after changes. Keep captions concise; put detailed guard conditions in the README tables instead of adding more connectors. Never let a diagram imply that acceptance, a pending operation or a broadcast hash proves payment.
 
-The main README embeds absolute `raw.githubusercontent.com` PNG URLs for hosted Markdown readers and also links local PNG/SVG files. Push these assets and the README together before expecting those public URLs to load. For offline reading, use the local image links. A package installation does not publish images to GitHub.
+Reading the guide needs no Mermaid support or JavaScript. PNGs work in ordinary Markdown/image viewers, and SVGs remain sharp when zoomed. The main README embeds hosted PNG URLs and also links local PNG/SVG files. Push images and README together before expecting public URLs to update; use the local links for offline reading.
