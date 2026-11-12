@@ -365,3 +365,39 @@ test('reopened job: fresh agreement binds wallet consent; an old consent cannot 
  job=await f.act('fund','buyer',{worker_signature:signature,expected_epoch:1},'fresh-consent');assert.equal(job.state,'funded');assert.equal(job.escrow_ledger.locked_amount,'100');
  await advance(101);await f.act('refund','buyer');
 });
+test('profit policy: factory defaults worker amount, protects cost privacy, and realizes profit only after confirmed escrow settlement',async()=>{
+ const {createSqliteStorage}=require('../src/storage/index.cjs');const {createEscrowApplication}=require('../src/operations/index.cjs');const storage=createSqliteStorage({filename:':memory:'});let cost='10';
+ try{
+ const f=await fixture('profit_journey',{workflowStore:storage.jobs,transactions:storage.transactions});await fund(f);
+ // Test-only authority isolates policy wiring; credential cryptography is covered separately.
+ const authority={isActive:async()=>true,verifyCredential:async credential=>({sub:credential})};
+ const app=createEscrowApplication({storage,authority,escrows:[{provider,...config,confirmations:1}],signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,limitsFor:async()=>({perTransaction:'100',daily:'1000',total:'10000'}),approveSigning:async()=>true,validateArtifact:async()=>true,settlementPolicy:{costBasisFor:async()=>cost,budgetFor:async()=> '100'}});
+ await assert.rejects(app.workflow.act(f.id,'propose_settlement',{...proposal(f,'7')},{actor:'worker',idempotencyKey:'loss'}),{code:'FORBIDDEN'});
+ const input=proposal(f);delete input.worker_amount;let job=await app.workflow.act(f.id,'propose_settlement',input,{actor:'worker',idempotencyKey:'profit-proposal'});
+ for(let i=0;job.pending&&i<8;i++){await provider.send('evm_mine',[]);job=await app.workflow.reconcile(f.id,'worker');}
+ assert.equal(job.negotiation.current.worker_amount,'20');assert.equal(Object.hasOwn(job.negotiation.current,'cost_basis_raw'),false);cost='99';
+ async function state(actor){const response=await app.handler(new Request('https://app.test/api/state',{headers:{authorization:'Bearer '+actor}}));assert.equal(response.status,200);return (await response.json()).a423.jobs[0];}
+ let worker=await state('worker'),buyer=await state('buyer');assert.equal(worker.profit.cost_basis_raw,'10');assert.equal(worker.profit.realized_profit_raw,null);assert.equal(Object.hasOwn(buyer.profit,'cost_basis_raw'),false);
+ const tools=app.chatTools('worker');assert.match((await tools.inspect_settlement_policy({job_id:f.id})).prompt,/Profit is the primary objective/);assert.equal((await tools.list_jobs())[0].profit.target_payout,'20');
+ job=await app.workflow.acceptCancellation(f.id,await cancellationApproval(job),{actor:'buyer',idempotencyKey:'profit-accept'});
+ for(let i=0;job.pending&&i<8;i++){await provider.send('evm_mine',[]);job=await app.workflow.reconcile(f.id,'buyer');}
+ assert.equal(job.escrow_ledger.worker_paid,'20');worker=await state('worker');assert.equal(worker.profit.realized_profit_raw,'10');assert.equal(worker.profit.realized_margin_bps,'5000');assert.equal(worker.profit.receipt_confirmed,true);
+ buyer=await state('buyer');assert.equal(buyer.profit.realized_payout_raw,'20');assert.equal(Object.hasOwn(buyer.profit,'realized_profit_raw'),false);
+ const receipt=await app.handler(new Request('https://app.test/api/a423-receipts/'+f.id,{headers:{authorization:'Bearer buyer'}}));assert.equal(Object.hasOwn((await receipt.json()).profit,'cost_basis_raw'),false);
+ }finally{storage.close();}
+});
+test('pending recovery: malformed submit is safely rejected without altering custody; valid submit cannot be discarded',async()=>{
+ const f=await fixture('repair_malformed');await fund(f);await f.act('start','worker');
+ await assert.rejects(f.w.act(f.id,'submit',{result_hash:'not-a-hash'},{actor:'worker',idempotencyKey:'malformed'}));const pending=(await f.w.get(f.id,'worker')).pending;assert.ok(pending);
+ await assert.rejects(f.w.rejectPendingOperation(f.id,{operation_id:pending.id,reason:'Malformed artifact hash'},{actor:'buyer'}),{code:'FORBIDDEN'});
+ const journalId=pending.id+':submit';await f.transactions.create(journalId,{hash:'unknown-intent',raw:'unknown'});
+ await assert.rejects(f.w.rejectPendingOperation(f.id,{operation_id:pending.id,reason:'Do not discard signed intent'},{actor:'worker'}),/Journaled intent/);
+ // Exercise a clean malformed operation separately; the journaled job remains pending.
+ const clean=await fixture('repair_clean');await fund(clean);await clean.act('start','worker');await assert.rejects(clean.w.act(clean.id,'submit',{}, {actor:'worker',idempotencyKey:'bad'}));
+ const op=(await clean.w.get(clean.id,'worker')).pending;
+ await assert.rejects(clean.adapters.submit.rejectPending({job:await clean.w.get(clean.id,'worker'),input:op.input,operation:{...op,observation:{reference:'external-unknown-intent'}}}),/without external transaction references/);
+ let job=await clean.w.rejectPendingOperation(clean.id,{operation_id:op.id,reason:'Missing artifact hash; runner will retry with a real result'},{actor:'worker'});assert.equal(job.pending,null);assert.equal(job.state,'running');assert.equal(job.escrow_ledger.locked_amount,'100');assert.equal(job.events.at(-1).data.recovery.proof.never_executable,true);
+ job=await clean.act('submit','worker',{result_hash:hash('repaired artifact')},'valid-submit');assert.equal(job.state,'submitted');
+ const validCtx={job,input:{result_hash:hash('valid')},operation:{id:'valid-op',actor:'worker'}};await assert.rejects(clean.adapters.submit.rejectPending(validCtx),/syntactically impossible/);
+ await advance(301);await clean.act('timeout','buyer');
+});

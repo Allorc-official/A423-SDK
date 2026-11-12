@@ -16,7 +16,7 @@ export interface TransactionStore {
   /** Atomically reserve a nonce per chain/address; same operationId always returns same nonce. */
   reserveNonce(scope: string, minimum: number, operationId: string): Promise<number>;
 }
-export interface EscrowAdapter { execute(context: AdapterContext): Promise<AdapterResult>; reconcile(context: AdapterContext): Promise<AdapterResult> }
+export interface EscrowAdapter { execute(context: AdapterContext): Promise<AdapterResult>; reconcile(context: AdapterContext): Promise<AdapterResult>;rejectPending?(context: AdapterContext): Promise<AdapterResult> }
 export interface EscrowAdapterOptions extends EscrowConfiguration {
   provider: Provider;
   /** Requires populateTransaction + offline signTransaction support; no silent wallet approval. */

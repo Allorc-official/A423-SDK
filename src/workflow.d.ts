@@ -43,9 +43,10 @@ export type Effect = (context: AdapterContext) => Promise<AdapterResult>;
 export interface Transition { from: string[]; roles: string[]; to: string; effect?: boolean }
 export interface WorkflowOptions {
   store: WorkflowStore;
-  adapters?: Record<string, Effect | { execute: Effect; reconcile?: Effect }>;
+  adapters?: Record<string, Effect | { execute: Effect; reconcile?: Effect; rejectPending?: Effect }>;
   /** Return true to allow; authenticated actor ID must be supplied by your application. */
-  authorize?(context: { job: WorkflowJob; action: string; actor: string; input: Json }): boolean | Promise<boolean>;
+  authorize?(context: { job: WorkflowJob; action: string; actor: string; input: Json;phase?: 'execute'|'reconcile' }): boolean | Promise<boolean>;
+  prepareInput?(context: {job: WorkflowJob;action: string;actor: string;input: Json}): Promise<Json>;
   /** Throw to reject application-specific terms. */
   validateEvidence?(context: {job: WorkflowJob;action: string;evidence: {[key: string]: Json}}): void | Promise<void>;
   validateTerms?(terms: { [key: string]: Json }): void | Promise<void>;
@@ -57,6 +58,7 @@ export interface Workflow {
   get(id: string, actor: string): Promise<WorkflowJob>;
   assertSafe(id: string, actor: string): Promise<WorkflowJob>;
   act(id: string, action: string, input: Json, options: { actor: string; idempotencyKey: string }): Promise<WorkflowJob>;
+  rejectPendingOperation(id: string,input: {operation_id: string;reason: string},options: {actor: string}): Promise<WorkflowJob>;
   resume(id: string, actor: string): Promise<WorkflowJob>;
   reconcile(id: string, actor: string): Promise<WorkflowJob>;
   cancellation(id: string, actor: string): Promise<CancellationSubflow | null>;

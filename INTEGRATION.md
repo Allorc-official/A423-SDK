@@ -1,3 +1,7 @@
+# Profit-driven settlement in 0.8
+
+Configure the application factory with `settlementPolicy: {costBasisFor, budgetFor, policy}` to opt in. Read [PROFIT-POLICY.md](./PROFIT-POLICY.md) for cost freezing, privacy, prompts, owner exceptions, malformed-pending recovery and remote app migration. Existing 0.5 contracts and 0.6 cancellation receipts remain compatible.
+
 # Pre-funding decline and reopening in 0.7
 
 New actions: `decline` (worker) and `reopen` (required participants). Preserve the job ID, inspect `pre_funding_cancellations`, and supply `cancellation_id` when reopening. After reopening, supply `expected_epoch` for quote/accept/fund/cancel/decline. A fresh quote includes a reserved `_a423_reopen` commitment in its terms; sign/hash the returned agreement, not the original input. See [CANCELLATION.md](./CANCELLATION.md#pre-funding-decline-and-reopening--07).
@@ -21,7 +25,7 @@ The remote MVP was not available in the SDK workspace; these utilities do not im
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.7.0
+npm install @allorc/a423-sdk@0.8.0
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.

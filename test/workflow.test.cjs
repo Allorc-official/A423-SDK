@@ -141,3 +141,20 @@ test('repeated cancellation/reopen cycles keep monotonically increasing quote re
  j=await act(w,'reopen','buyer',{cancellation_id:id},'reopen-'+epoch);assert.equal(j.epoch,epoch+1);assert.equal(j.pre_funding_cancellations.length,epoch+1);
  }
 });
+test('pending rejection refuses unknown IDs, unsupported adapters, nonproofs and safety holds',async()=>{
+ let blocked=false;const memory=createMemoryStore(),store={...memory,getSafety:async()=>({blocked})};
+ const w=setup({store,adapters:{fund:{execute:async()=>({status:'pending'}),rejectPending:async()=>({status:'rejected',never_executable:false})}}});await accepted(w);const job=await act(w,'fund','buyer');const operation_id=job.pending.id;
+ await assert.rejects(w.rejectPendingOperation('one',{operation_id:'wrong',reason:'test'},{actor:'buyer'}),{code:'PENDING_MISMATCH'});
+ await assert.rejects(w.rejectPendingOperation('one',{operation_id,reason:'test'},{actor:'buyer'}),{code:'RECOVERY_UNSAFE'});
+ blocked=true;await assert.rejects(w.rejectPendingOperation('one',{operation_id,reason:'test'},{actor:'buyer'}),{code:'SAFETY_HOLD'});assert.ok((await w.get('one','buyer')).pending);blocked=false;
+ const noHook=createWorkflow({store,adapters:{fund:async()=>({status:'pending'})}});await assert.rejects(noHook.rejectPendingOperation('one',{operation_id,reason:'test'},{actor:'buyer'}),{code:'RECOVERY_UNSUPPORTED'});
+ const tampered=structuredClone(await memory.get('one'));tampered.pending.input={different:'intent'};await memory.compareAndSet('one',tampered.version,{...tampered,version:tampered.version+1});
+ await assert.rejects(w.rejectPendingOperation('one',{operation_id,reason:'test'},{actor:'buyer'}),{code:'RECOVERY_UNSAFE'});
+});
+test('authorization distinguishes observe-only reconciliation from execution and resume',async()=>{
+ let spendingAllowed=true;const phases=[];
+ const w=setup({authorize:async ctx=>{if(ctx.action==='fund'){phases.push(ctx.phase);return spendingAllowed||ctx.phase==='reconcile';}return true;},adapters:{fund:{execute:async()=>({status:'pending'}),reconcile:async()=>({status:'confirmed',evidence:{reference:'observed-payment'}})}}});
+ await accepted(w);await act(w,'fund','buyer');spendingAllowed=false;
+ await assert.rejects(w.resume('one','buyer'),{code:'FORBIDDEN'});
+ assert.equal((await w.reconcile('one','buyer')).state,'funded');assert.deepEqual(phases,['execute','execute','reconcile']);
+});

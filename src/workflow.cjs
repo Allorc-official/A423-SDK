@@ -33,7 +33,7 @@ const RULES = {
 };
 /** Pure canonical JSON SHA-256. This is an integrity commitment, not authentication. */
 function hashAgreement(terms) { return digest(terms); }
-function createWorkflow({ store, adapters = {}, authorize, validateTerms, validateEvidence, transitions = {} } = {}) {
+function createWorkflow({ store, adapters = {}, authorize, prepareInput, validateTerms, validateEvidence, transitions = {} } = {}) {
   if (!store || ['get', 'create', 'compareAndSet'].some(k => typeof store[k] !== 'function')) throw new TypeError('Supply an atomic workflow store');
   const rules = copy(RULES);
   for (const [action, rule] of Object.entries(transitions)) {
@@ -54,9 +54,9 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
     if (!job || !Object.values(job.participants).includes(actor)) error('NOT_FOUND', 'Job not found', 404);
     return copy(job);
   }
-  async function allowed(job, action, actor, input, rule) {
+  async function allowed(job, action, actor, input, rule, phase='execute') {
     if (!rule.roles.some(role => job.participants[role] === actor)) error('FORBIDDEN', 'Actor cannot perform this action', 403);
-    if (authorize && await authorize({ job: copy(job), action, actor, input: copy(input) }) !== true) error('FORBIDDEN', 'Application policy rejected action', 403);
+    if (authorize && await authorize({ job: copy(job), action, actor, input: copy(input), phase }) !== true) error('FORBIDDEN', 'Application policy rejected action', 403);
   }
   async function complete(job, result) {
     const pending = job.pending;
@@ -142,6 +142,8 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       if(safety?.blocked) error('SAFETY_HOLD','Evidence requires reconciliation before further actions',409);
       const rule = Object.hasOwn(rules,action) ? rules[action] : null;
       if (!rule) error('UNKNOWN_ACTION', 'Unknown workflow action', 400);
+      if(!rule.roles.some(role=>job.participants[role]===actor))error('FORBIDDEN','Actor cannot perform this action',403);
+      if(prepareInput){input=await prepareInput({job:copy(job),action,actor,input:copy(input)});canonical(input);}
       await allowed(job, action, actor, input, rule);
       const key = digest([actor, idempotencyKey]);
       const requestHash = digest([action, input]);
@@ -198,6 +200,20 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
       next.operations[key] = { request_hash: requestHash, status: 'confirmed', result: { status: 'confirmed' } };
       return save(job, next, action, actor, input);
     },
+    async rejectPendingOperation(id,{operation_id,reason},{actor}={}) {
+      const job=await get(id,actor),pending=job.pending;
+      if((store.getSafety?await store.getSafety(id):null)?.blocked)error('SAFETY_HOLD','Evidence requires reconciliation before recovery',409);
+      if(!pending||pending.id!==operation_id)error('PENDING_MISMATCH','Supply the current pending operation ID',409);
+      if(typeof reason!=='string'||!reason.trim()||reason.length>4000)error('INVALID_INPUT','Recovery reason required',400);
+      const rule=rules[pending.action];if(!rule)error('RECOVERY_UNSUPPORTED','Unknown pending action',409);
+      await allowed(job,pending.action,actor,pending.input,rule);
+      if(pending.request_hash!==digest([pending.action,pending.input]))error('RECOVERY_UNSAFE','Pending input integrity mismatch; manual investigation required',409);
+      const inspect=adapters[pending.action]?.rejectPending;
+      if(typeof inspect!=='function')error('RECOVERY_UNSUPPORTED','Adapter does not prove this operation is never executable',409);
+      const proof=await inspect({job:copy(job),input:copy(pending.input),operation:copy(pending)});
+      if(proof?.status!=='rejected'||proof.never_executable!==true)error('RECOVERY_UNSAFE','Operation might execute; reconcile instead',409);
+      return complete(job,{status:'rejected',reason,recovery:{operation_id,proof:copy(proof)}});
+    },
     async resume(id, actor) {
       const job=await get(id,actor);
       if(!job.pending)return job;
@@ -209,7 +225,7 @@ function createWorkflow({ store, adapters = {}, authorize, validateTerms, valida
     async reconcile(id, actor) {
       const job = await get(id, actor);
       if (!job.pending) return job;
-      await allowed(job, job.pending.action, actor, job.pending.input, rules[job.pending.action]);
+      await allowed(job, job.pending.action, actor, job.pending.input, rules[job.pending.action],'reconcile');
       return execute(job, true);
     },
     async cancellation(id,actor){return require('./cancellation.cjs').getCancellationSubflow(await get(id,actor));},

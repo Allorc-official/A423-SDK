@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- Add optional `/policy` primitives for integer gross-margin evaluation, configurable 50% target/10% minimum/50% maximum defaults, capped recommendations and private profit projections.
+- Wire durable cost/budget freezing, owner-approved exceptions, worker/requester proposal defaults and acceptance guards into the application factory.
+- Add role-aware policy inspection/prompts, state/receipt projections and reference dashboard economics.
+- Add audit-logged malformed-pending rejection with adapter proof; the reference adapter supports only impossible submit encodings with no journal/external/on-chain submission.
+- Retain existing contract, signatures and public settlement formats. Remote app metering/UI adoption remains separate.
+
 ## 0.7.0
 
 - Add worker `decline` before funding, with retained cancellation IDs, reasons, prior agreements and actor history.

@@ -17,3 +17,7 @@ Reorg watchers quarantine stale/unavailable evidence; they cannot guarantee fina
 Report vulnerabilities privately through the repository's configured security reporting channel. Do not post credentials, customer records or live exploit details publicly. No completed independent audit is claimed.
 
 Closing settlements in 0.5 require a new deployment and exact current proposal acceptance. Publishing freezes ordinary release, but cannot reverse a release already mined. Proposals never extend original refund/resolution deadlines. Unsubmitted partial-work claims do not remove the original expiry refund right; arbitrary expenses are not automatically owed. First valid closing settlement/refund/arbitration/timeout wins; no later operation can settle the same job again. See SETTLEMENT.md.
+
+## Off-chain profit policy (0.8)
+
+Private cost snapshots and exception decisions live in backend KV, not agreement terms/events. Configure role-aware projectors and never share worker-private responses through public caches. The policy is opt-in and cannot constrain direct external contract calls or prove costs are real. Owner exceptions must be checked by a trusted server approval system, never client flags. Malformed-pending recovery requires an adapter impossibility proof and refuses any known signed/external intent; do not add permissive recovery hooks. See PROFIT-POLICY.md.

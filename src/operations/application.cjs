@@ -1,9 +1,12 @@
 'use strict';
 const {createWorkflowHandler}=require('../workflow.cjs');
-function createChatTools({workflow,store,queue,actor}={}){
+function createChatTools({workflow,store,queue,actor,profitFor,policyPromptFor}={}){
  const {enqueueRunningJobs}=require('./index.cjs');
  const act=(action)=>async({job_id,input={},idempotency_key})=>workflow.act(job_id,action,input,{actor,idempotencyKey:idempotency_key});
  return {
+  list_jobs:async()=>Promise.all((await store.list({actor,limit:1000})).map(async job=>profitFor?{...job,profit:await profitFor(job,actor)}:job)),
+  inspect_settlement_policy:async({job_id})=>{const job=await workflow.get(job_id,actor);if(!profitFor)throw Error('Settlement policy not configured');return {profit:await profitFor(job,actor),prompt:policyPromptFor?policyPromptFor(job,actor):null};},
+  reconcile_job:async({job_id})=>workflow.reconcile(job_id,actor),
   send_job_offer:async({id,worker_id,verifier_id,arbitrator_id,terms,metadata={}})=>{
    let job=await workflow.create({id,participants:{requester:actor,worker:worker_id,verifier:verifier_id,arbitrator:arbitrator_id},metadata},actor);
    if(terms)job=await workflow.act(job.id,'quote',{terms},{actor,idempotencyKey:'initial_quote'});return job;
@@ -12,7 +15,7 @@ function createChatTools({workflow,store,queue,actor}={}){
   work_on_job:async(input)=>{const job=await act('start')(input);if(!job.pending&&job.state==='running')await enqueueRunningJobs({store,queue});return job;}
  };
 }
-function createApplicationHandler({workflow,store,queue,authenticate,revalidate,consentFor,settlementConsentFor,legacyState=async()=>({}),authorityHandler,forwardCancellations=true,basePath='/api/a423'}={}){
+function createApplicationHandler({workflow,store,queue,authenticate,revalidate,consentFor,settlementConsentFor,profitFor,legacyState=async()=>({}),authorityHandler,forwardCancellations=true,basePath='/api/a423'}={}){
  const {createEventStream,freshReceipts,renderReceiptPdf}=require('./index.cjs');
  const protocol=createWorkflowHandler({workflow,authenticate,basePath,forwardCancellations,revalidateCancellationReceipt:async({job,receipt})=>{
   const {validateCancellationReceipt}=require('../cancellation.cjs');validateCancellationReceipt(job,receipt);
@@ -27,11 +30,13 @@ function createApplicationHandler({workflow,store,queue,authenticate,revalidate,
   const actor=await authenticate(request);if(!actor)return Response.json({error:'unauthenticated'},{status:401});
   try{
    if(path==='/api/state'){
-    const jobs=await Promise.all((await store.list({actor,limit:1000})).map(async job=>({...job,safety:await store.getSafety(job.id)})));const wallet_transactions=jobs.flatMap(j=>j.evidence.filter(e=>e.evidence.transaction_hash).map(e=>({job_id:j.id,action:e.action,...e.evidence})));
+    const jobs=await Promise.all((await store.list({actor,limit:1000})).map(async job=>({...job,profit:profitFor?await profitFor(job,actor):null,safety:await store.getSafety(job.id)})));const wallet_transactions=jobs.flatMap(j=>j.evidence.filter(e=>e.evidence.transaction_hash).map(e=>({job_id:j.id,action:e.action,...e.evidence})));
     return Response.json({...await legacyState(actor),a423:{jobs,wallet_transactions}},{headers:{'cache-control':'no-store'}});
    }
+   const profit=/^\/api\/a423-profit\/([A-Za-z0-9_-]{1,128})$/.exec(path);
+   if(profit){const job=await workflow.get(profit[1],actor);if(!profitFor)return Response.json({error:'POLICY_NOT_CONFIGURED'},{status:404});return Response.json(await profitFor(job,actor),{headers:{'cache-control':'no-store'}});}
    const receipt=/^\/api\/a423-receipts\/([A-Za-z0-9_-]{1,128})(\.pdf)?$/.exec(path);
-   if(receipt){const data=await freshReceipts({workflow,id:receipt[1],actor,revalidate});if(receipt[2])return new Response(Buffer.from(await renderReceiptPdf(data)),{headers:{'content-type':'application/pdf','cache-control':'no-store'}});return Response.json(data,{headers:{'cache-control':'no-store'}});}
+   if(receipt){const data=await freshReceipts({workflow,id:receipt[1],actor,revalidate});if(profitFor)data.profit=await profitFor(await workflow.get(receipt[1],actor),actor);if(receipt[2])return new Response(Buffer.from(await renderReceiptPdf(data)),{headers:{'content-type':'application/pdf','cache-control':'no-store'}});return Response.json(data,{headers:{'cache-control':'no-store'}});}
    const closing=/^\/api\/a423-settlement-consent\/([A-Za-z0-9_-]{1,128})$/.exec(path);
    if(closing){const job=await workflow.get(closing[1],actor);if(![job.participants.requester,job.participants.worker].includes(actor))return Response.json({error:'settlement party required'},{status:403});if(!settlementConsentFor)throw Error('Settlement consent not configured');const typed=await settlementConsentFor(job);return Response.json(JSON.parse(JSON.stringify(typed,(_,v)=>typeof v==='bigint'?v.toString():v)),{headers:{'cache-control':'no-store'}});}
    const consent=/^\/api\/a423-worker-consent\/([A-Za-z0-9_-]{1,128})$/.exec(path);
