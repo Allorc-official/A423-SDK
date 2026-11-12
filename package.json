@@ -1,7 +1,7 @@
 {
   "name": "@allorc/a423-sdk",
   "version": "0.8.1",
-  "description": "Experimental Next.js-friendly agent job SDK with typed HTTP client and pluggable storage, authentication and settlement",
+  "description": "Experimental backend SDK for agent job agreements, durable workflows, ERC-20 escrow, negotiated settlement and configurable profit policies",
   "license": "MIT",
   "type": "commonjs",
   "main": "./src/index.cjs",
@@ -82,7 +82,9 @@
     "src/cancellation.cjs",
     "CANCELLATION.md",
     "src/policy",
-    "PROFIT-POLICY.md"
+    "PROFIT-POLICY.md",
+    "examples/quickstart.mjs",
+    "examples/README.md"
   ],
   "engines": {
     "node": ">=22.13"

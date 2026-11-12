@@ -1,5 +1,7 @@
 # Reference on-chain escrow (0.5.0)
 
+[Start here: installation, arguments and lifecycle maps](./README.md) · [All examples](./examples/README.md)
+
 For negotiated cancellation and partial compensation, see [SETTLEMENT.md](./SETTLEMENT.md). The 0.5 contract adds proposal/counter/accept operations and a Negotiating state; a new deployment is required.
 
 This opt-in module implements a real ERC-20 escrow path. The generic workflow remains provider-independent. It includes Solidity source, reproducibly compiled ABI/bytecode, an ethers v6 adapter and local-EVM tests. It is experimental and has not received an independent security audit; deploy to a local chain/testnet for evaluation. No contract is deployed automatically and no funds move merely by installing the package.

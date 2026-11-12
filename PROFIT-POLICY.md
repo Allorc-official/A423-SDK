@@ -1,5 +1,7 @@
 # Profit-driven settlement policy — 0.8.1
 
+[Start here: installation, arguments and lifecycle maps](./README.md) · [All examples](./examples/README.md)
+
 Implements the SDK portion of the supplied **A423 Profit-Driven Settlement Policy — Recommendation**. It is an opt-in off-chain negotiation policy. Existing users keep their current settlement behavior until configured. The 0.5 escrow contract, `a423.closing.v1`, signatures and cancellation receipt formats are unchanged.
 
 ## Configure the backend

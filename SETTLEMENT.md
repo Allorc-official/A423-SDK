@@ -1,5 +1,7 @@
 # Negotiated closing settlements — 0.5.0
 
+[Start here: installation, arguments and lifecycle maps](./README.md) · [All examples](./examples/README.md)
+
 For the 0.6 accepted cancellation JSON → escrow execution → confirmed receipt subflow, see [CANCELLATION.md](./CANCELLATION.md). The 0.5 contract is unchanged; an accepted instruction is not proof of payment.
 
 This release adds a closing negotiation for cancellation and partial-work compensation. A party proposes a worker payment, the other can counter or accept, and the contract pays the agreed amount and refunds the remainder atomically. It closes the whole job. **It does not introduce partial releases while continuing work or milestone payments.**

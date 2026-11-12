@@ -1,5 +1,7 @@
 # Cancellation subflow — 0.6.0
 
+[Start here: installation, arguments and lifecycle maps](./README.md) · [All examples](./examples/README.md)
+
 A job has one parent lifecycle and an optional cancellation subflow. Cancellation can negotiate compensation for completed work and agreed expenses, then close the job. It does not permit continuing work after a partial release.
 
 The flow is:

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased documentation
+
+- Rewrite the README around installation/version checks, initialization argument definitions, typed job fields, end-to-end action tables and Mermaid process maps.
+- Add a runnable no-chain quickstart and an examples index; include both in the npm package.
+- Explain published versus source versions, private economics, cancellation/reopening boundaries and actual receipt confirmation.
+
 ## 0.8.1
 
 - Accept direct `settlementPolicy.thresholds` initialization arguments alongside the existing policy-builder form (mutually exclusive).

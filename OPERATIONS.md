@@ -1,5 +1,7 @@
 # A423 operational integration
 
+[Start here: installation, arguments and lifecycle maps](./README.md) · [All examples](./examples/README.md)
+
 For the 0.6 accepted cancellation JSON → escrow execution → confirmed receipt subflow, see [CANCELLATION.md](./CANCELLATION.md). The 0.5 contract is unchanged; an accepted instruction is not proof of payment.
 
 Version 0.5 adds closing negotiation, a paused-work state, a separate escrow ledger and proposal history. See SETTLEMENT.md before deploying the new contract. Execution callbacks receive an AbortSignal and must honor it for cooperative cancellation.

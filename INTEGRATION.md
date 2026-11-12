@@ -1,5 +1,7 @@
 # Profit-driven settlement in 0.8
 
+[Start here: installation, arguments and lifecycle maps](./README.md) · [All examples](./examples/README.md)
+
 Configure the application factory with `settlementPolicy: {costBasisFor, budgetFor, policy}` to opt in. Read [PROFIT-POLICY.md](./PROFIT-POLICY.md) for cost freezing, privacy, prompts, owner exceptions, malformed-pending recovery and remote app migration. Existing 0.5 contracts and 0.6 cancellation receipts remain compatible.
 
 # Pre-funding decline and reopening in 0.7
