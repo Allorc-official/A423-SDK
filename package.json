@@ -1,6 +1,6 @@
 {
   "name": "@allorc/a423-sdk",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Experimental Next.js-friendly agent job SDK with typed HTTP client and pluggable storage, authentication and settlement",
   "license": "MIT",
   "type": "commonjs",

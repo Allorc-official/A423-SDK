@@ -371,7 +371,7 @@ test('profit policy: factory defaults worker amount, protects cost privacy, and 
  const f=await fixture('profit_journey',{workflowStore:storage.jobs,transactions:storage.transactions});await fund(f);
  // Test-only authority isolates policy wiring; credential cryptography is covered separately.
  const authority={isActive:async()=>true,verifyCredential:async credential=>({sub:credential})};
- const app=createEscrowApplication({storage,authority,escrows:[{provider,...config,confirmations:1}],signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,limitsFor:async()=>({perTransaction:'100',daily:'1000',total:'10000'}),approveSigning:async()=>true,validateArtifact:async()=>true,settlementPolicy:{costBasisFor:async()=>cost,budgetFor:async()=> '100'}});
+ const app=createEscrowApplication({storage,authority,escrows:[{provider,...config,confirmations:1}],signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,limitsFor:async()=>({perTransaction:'100',daily:'1000',total:'10000'}),approveSigning:async()=>true,validateArtifact:async()=>true,settlementPolicy:{thresholds:{target_margin_bps:5000,min_margin_bps:1000,max_margin_bps:5000,require_counter:true},costBasisFor:async()=>cost,budgetFor:async()=> '100'}});
  await assert.rejects(app.workflow.act(f.id,'propose_settlement',{...proposal(f,'7')},{actor:'worker',idempotencyKey:'loss'}),{code:'FORBIDDEN'});
  const input=proposal(f);delete input.worker_amount;let job=await app.workflow.act(f.id,'propose_settlement',input,{actor:'worker',idempotencyKey:'profit-proposal'});
  for(let i=0;job.pending&&i<8;i++){await provider.send('evm_mine',[]);job=await app.workflow.reconcile(f.id,'worker');}

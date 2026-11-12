@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- Accept direct `settlementPolicy.thresholds` initialization arguments alongside the existing policy-builder form (mutually exclusive).
+- Validate threshold names, types and ordering at startup; capture the configuration so later caller mutations cannot change it.
+- Expose the read-only effective configuration and document per-instance setup.
+
 ## 0.8.0
 
 - Add optional `/policy` primitives for integer gross-margin evaluation, configurable 50% target/10% minimum/50% maximum defaults, capped recommendations and private profit projections.

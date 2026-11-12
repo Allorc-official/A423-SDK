@@ -69,3 +69,17 @@ test('policy prompts are configurable, distinguish roles and never imply a payme
  assert.match(settlementPolicyPrompt(),/5000 basis points gross margin/);assert.match(settlementPolicyPrompt(),/never disclose internal cost/);assert.match(settlementPolicyPrompt({role:'requester'}),/original budget/);assert.equal(settlementPolicyPrompt({override:'Use organization policy'}),'Use organization policy');
 });
 test('policy module supports ESM imports',async()=>{const esm=await import('../src/policy/index.mjs');assert.equal(esm.createSettlementPolicy().evaluate({cost_basis_raw:'2',budget_raw:'10',escrow_raw:'10'}).recommended_payout,'4');});
+test('initialization accepts direct thresholds, freezes configuration and rejects conflicting or misspelled options',async()=>{
+ const storage=createSqliteStorage({filename:':memory:'});let calls=0;const callbacks={kv:storage.kv,costBasisFor:async()=>{calls++;return '600505';},budgetFor:async()=> '5000000'};
+ try{
+ const thresholds={target_margin_bps:3000,min_margin_bps:500,max_margin_bps:4000,require_counter:false};
+ const s=createProfitSettlementService({...callbacks,thresholds});thresholds.target_margin_bps=9000;
+ assert.equal(s.configuration.target_margin_bps,3000);assert.equal(Object.isFrozen(s.configuration),true);assert.equal(calls,0);
+ const e=await s.evaluate(job());assert.equal(e.target_payout,'857865');assert.equal(e.require_counter,false);assert.match(s.prompt(),/3000 basis points/);
+ assert.throws(()=>createProfitSettlementService({...callbacks,thresholds:{target_margin_bps:6000,min_margin_bps:7000,max_margin_bps:8000}}),/minimum <= target/);
+ assert.throws(()=>createProfitSettlementService({...callbacks,thresholds:{target_margin_bps:3000},policy}),/either thresholds or policy/);
+ assert.throws(()=>createSettlementPolicy({target_magin_bps:3000}),/Unknown policy threshold/);
+ for(const value of [null,[],true])assert.throws(()=>createSettlementPolicy(value),/plain object/);
+ assert.throws(()=>createProfitSettlementService({...callbacks,policy:{configuration:{target_margin_bps:10000},evaluate:()=>({})}}),/Margins/);
+ }finally{storage.close();}
+});

@@ -9,11 +9,12 @@ export interface SettlementPolicy {readonly configuration: Readonly<Required<Pol
 export type CostBasisProvider=(job: WorkflowJob)=>Promise<string>;
 export interface ProfitProjection extends PolicyEvaluation {advisory: true;receipt_confirmed: boolean;projected_payout_raw: string;projected_profit_raw: string;projected_margin_bps: string | null;target_status: 'target_met'|'below_target';realized_payout_raw: string | null;realized_profit_raw: string | null;realized_margin_bps: string | null}
 export interface PolicyContext {job: WorkflowJob;actor: string;action: string;input: any}
-export interface ProfitServiceOptions {kv: KeyValueStore;costBasisFor: CostBasisProvider;budgetFor(job: WorkflowJob): Promise<string>;policy?: SettlementPolicy;approveException?(context: {job: WorkflowJob;actor: string;action: string;payout_raw: string;evaluation: PolicyEvaluation;proposal_hash: string | null}): Promise<{approved: boolean;approval_id?: string} | null>;canViewPrivate?(context: {job: WorkflowJob;actor: string}): Promise<boolean>}
+export interface ProfitServiceOptions {kv: KeyValueStore;costBasisFor: CostBasisProvider;budgetFor(job: WorkflowJob): Promise<string>;policy?: SettlementPolicy;thresholds?: PolicyConfiguration;approveException?(context: {job: WorkflowJob;actor: string;action: string;payout_raw: string;evaluation: PolicyEvaluation;proposal_hash: string | null}): Promise<{approved: boolean;approval_id?: string} | null>;canViewPrivate?(context: {job: WorkflowJob;actor: string}): Promise<boolean>}
 export function createSettlementPolicy(options?: PolicyConfiguration): SettlementPolicy;
 export function profitProjection(input: {evaluation: PolicyEvaluation;payout_raw: string;confirmed?: boolean}): ProfitProjection;
 export function settlementPolicyPrompt(options?: {role?: 'worker'|'requester';policy?: SettlementPolicy;override?: string}): string;
 export function createProfitSettlementService(options: ProfitServiceOptions): {
+ readonly configuration: Readonly<Required<PolicyConfiguration>>;
  evaluate(job: WorkflowJob,options?: {freeze?: boolean;offer_raw?: string}): Promise<PolicyEvaluation>;
  prepare(context: PolicyContext): Promise<Json>;
  authorize(context: PolicyContext): Promise<boolean>;

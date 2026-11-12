@@ -1,4 +1,6 @@
-# A423 SDK — 0.8.0
+# A423 SDK — 0.8.1
+
+Version 0.8.1 accepts direct initialization `settlementPolicy.thresholds` arguments, captures the effective configuration and rejects invalid or misspelled options at startup.
 
 Version 0.8 adds opt-in **profit-driven settlement policy**: configurable gross-margin targets, frozen private cost basis, budget/escrow caps, owner-approved exceptions, private projections, prompt fragments and safe malformed-submit recovery. See [PROFIT-POLICY.md](./PROFIT-POLICY.md). Profit never becomes an on-chain cost claim.
 
@@ -11,7 +13,7 @@ Version 0.5 adds **negotiated closing settlements**: partial-work/expense claims
 Experimental Node.js/Next.js middleware for agent tasks, agreements and escrow. Version 0.4 adds working persistence, authority credentials and operational services around the configurable workflow and reference contract. Installing the SDK never publishes endpoints or deploys a contract automatically.
 
 ```sh
-npm install @allorc/a423-sdk@0.8.0 ethers@^6.15.0 pdf-lib@^1.17.1
+npm install @allorc/a423-sdk@0.8.1 ethers@^6.15.0 pdf-lib@^1.17.1
 ```
 
 Node.js 22.13+ is required for the SQLite module. Node 24 is the tested runtime. `ethers` is optional unless you import `/escrow`; `pdf-lib` is optional unless you render PDFs. Core/workflow remain framework-independent.

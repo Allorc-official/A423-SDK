@@ -25,7 +25,7 @@ The remote MVP was not available in the SDK workspace; these utilities do not im
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.8.0
+npm install @allorc/a423-sdk@0.8.1
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.

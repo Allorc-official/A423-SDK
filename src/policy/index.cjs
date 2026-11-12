@@ -6,7 +6,11 @@ function raw(value,name){check(typeof value==='string'&&/^(0|[1-9][0-9]*)$/.test
 const min=(a,b)=>a<b?a:b,ceil=(a,b)=>(a+b-1n)/b;
 const floor=(a,b)=>a>=0n?a/b:-ceil(-a,b);
 function margin(cost,payout){return payout===0n?null:(floor((payout-cost)*BPS,payout)).toString();}
-function createSettlementPolicy({target_margin_bps=5000,min_margin_bps=1000,max_margin_bps=5000,require_counter=true}={}){
+function createSettlementPolicy(options={}){
+ check(options&&Object.getPrototypeOf(options)===Object.prototype,'Policy thresholds must be a plain object');
+ const keys=['target_margin_bps','min_margin_bps','max_margin_bps','require_counter'];
+ check(Object.keys(options).every(key=>keys.includes(key)),'Unknown policy threshold; use target_margin_bps, min_margin_bps, max_margin_bps or require_counter');
+ const {target_margin_bps=5000,min_margin_bps=1000,max_margin_bps=5000,require_counter=true}=options;
  for(const v of [target_margin_bps,min_margin_bps,max_margin_bps])check(Number.isSafeInteger(v)&&v>=0&&v<10000,'Margins must be integer basis points between 0 and 9999');
  check(min_margin_bps<=target_margin_bps&&target_margin_bps<=max_margin_bps,'Require minimum <= target <= maximum');check(typeof require_counter==='boolean','require_counter must be boolean');
  const configuration={target_margin_bps,min_margin_bps,max_margin_bps,require_counter};
@@ -35,13 +39,18 @@ function settlementPolicyPrompt({role='worker',policy=createSettlementPolicy(),o
  const shared='Use list_jobs to discover unknown IDs; never invent IDs. Reconcile OPERATION_PENDING before another action. Both parties approve the exact revision/hash. Acceptance is not payment; require a freshly confirmed receipt. The runner submits artifacts. Simulated costs are estimates, not invoices.';
  return (role==='worker'?`Profit is the primary objective. Inspect cost basis before quoting or proposing a closing split. Target ${c.target_margin_bps} basis points gross margin on revenue, minimum ${c.min_margin_bps}, maximum ${c.max_margin_bps}. Use the policy recommendation within budget and escrow caps. Never silently accept below cost or minimum; obtain explicit owner approval. ${c.require_counter?'Counter before accepting the first buyer offer. ':''}No cost means a full refund. Publicly share progress, work claims and proposed amounts only; never disclose internal cost, token counts or margin calculations.`:'Evaluate proposals against completed work and the original budget. Do not demand zero solely because work is incomplete; use progress and claims. Never exceed the original budget. Internal worker cost/margins are private.')+' '+shared;
 }
-function createProfitSettlementService({kv,costBasisFor,budgetFor,policy=createSettlementPolicy(),approveException,canViewPrivate=async()=>false}={}){
+function createProfitSettlementService({kv,costBasisFor,budgetFor,policy,thresholds,approveException,canViewPrivate=async()=>false}={}){
+ check(policy===undefined||thresholds===undefined,'Supply either thresholds or policy, not both');
+ policy=policy===undefined?createSettlementPolicy(thresholds):policy;
+ check(policy&&typeof policy.evaluate==='function'&&policy.configuration,'A valid SettlementPolicy is required');
+ // Capture and validate configuration at initialization, before any job or cost lookup.
+ const configuration=createSettlementPolicy(policy.configuration).configuration;
  check(kv&&typeof kv.create==='function'&&typeof costBasisFor==='function'&&typeof budgetFor==='function','Durable private KV, costBasisFor and budgetFor required');
  const key=job=>hashAgreement([job.id,job.agreement?.hash,job.epoch||0]);
  async function basis(job,freeze=false){
   check(job.agreement?.terms.escrow,'Escrow agreement required');const id=key(job),stored=await kv.get('a423_profit_basis',id);if(stored)return stored;
   const [cost,budget]=await Promise.all([costBasisFor(structuredClone(job)),budgetFor(structuredClone(job))]);
-  const snapshot={cost_basis_raw:cost,budget_raw:budget,escrow_raw:job.agreement.terms.escrow.amount,configuration:{...policy.configuration},frozen_at:new Date().toISOString()};
+  const snapshot={cost_basis_raw:cost,budget_raw:budget,escrow_raw:job.agreement.terms.escrow.amount,configuration:{...configuration},frozen_at:new Date().toISOString()};
   policy.evaluate(snapshot);
   if(!freeze)return snapshot;await kv.create('a423_profit_basis',id,snapshot);return await kv.get('a423_profit_basis',id);
  }
@@ -80,6 +89,6 @@ function createProfitSettlementService({kv,costBasisFor,budgetFor,policy=createS
   const e=await evaluate(job);const frozen=!!await kv.get('a423_profit_basis',key(job));
   return {...profitProjection({evaluation:e,payout_raw:payout,confirmed}),basis_frozen:frozen,evidence_status};
  }
- return {evaluate,prepare,authorize,project,prompt:options=>settlementPolicyPrompt({...options,policy})};
+ return {configuration,evaluate,prepare,authorize,project,prompt:options=>settlementPolicyPrompt({...options,policy:createSettlementPolicy(configuration)})};
 }
 module.exports={createSettlementPolicy,profitProjection,settlementPolicyPrompt,createProfitSettlementService};

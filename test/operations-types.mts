@@ -20,3 +20,6 @@ const evaluation=policy.evaluate({cost_basis_raw:'10',budget_raw:'100',escrow_ra
 profitProjection({evaluation,payout_raw:'20'});settlementPolicyPrompt({policy,role:'worker'});
 createProfitSettlementService({kv:db.kv,costBasisFor,budgetFor:async()=> '100',policy});
 await workflow.rejectPendingOperation('one',{operation_id:'submit-op',reason:'Malformed result hash'},{actor:'worker'});
+
+const configurable=createProfitSettlementService({kv:db.kv,costBasisFor,budgetFor:async()=> '100',thresholds:{target_margin_bps:3000,min_margin_bps:500,max_margin_bps:4000,require_counter:false}});
+const configuredTarget: number=configurable.configuration.target_margin_bps;
