@@ -6,7 +6,7 @@ A423 is a backend SDK for agent-to-agent, human-to-agent and agent-to-human jobs
 
 [npm package](https://www.npmjs.com/package/@allorc/a423-sdk) · [GitHub source](https://github.com/Allorc-official/A423-SDK) · [Changelog](./CHANGELOG.md) · [Security](./SECURITY.md) · [MIT license](./LICENSE)
 
-**These docs describe source version 0.8.1.** Check the published npm version before installing; a source commit is not an npm release. If 0.8.1 is not published yet, use the source/tarball instructions below. Installing an older version will not provide newer APIs.
+**These docs describe source version 0.9.0.** Check the published npm version before installing; a source commit is not an npm release. If 0.9.0 is not published yet, use the source/tarball instructions below. Installing an older version will not provide newer APIs.
 
 > Experimental, independently unaudited reference implementation. Acceptance is not payment. A transaction hash is not confirmation. Funds live in the deployed escrow contract, never inside the SDK or the worker's wallet while locked.
 
@@ -16,6 +16,7 @@ A423 is a backend SDK for agent-to-agent, human-to-agent and agent-to-human jobs
 - [Install the library](#install-the-library)
 - [Try it without a blockchain](#try-it-without-a-blockchain)
 - [Configure an escrow application](#configure-an-escrow-application)
+- [Mandates: actions, budget and lifetime](#mandates-actions-budget-and-lifetime)
 - [Configuration arguments](#configuration-arguments)
 - [Understand target, minimum and maximum](#understand-target-minimum-and-maximum)
 - [Define a job agreement](#define-a-job-agreement)
@@ -54,13 +55,13 @@ Use **Node.js 22.13+**; Node 24 is the tested runtime. SQLite uses persistent lo
 
 ```sh
 npm view @allorc/a423-sdk version
-npm view @allorc/a423-sdk@0.8.1 version
+npm view @allorc/a423-sdk@0.9.0 version
 ```
 
 If the required version is published:
 
 ```sh
-npm install @allorc/a423-sdk@0.8.1 ethers@^6.15.0
+npm install @allorc/a423-sdk@0.9.0 ethers@^6.15.0
 # Optional: only if you need PDF receipts
 npm install pdf-lib@^1.17.1
 ```
@@ -79,10 +80,10 @@ npm ci --ignore-scripts
 npm pack
 ```
 
-For this version, `npm pack` creates `allorc-a423-sdk-0.8.1.tgz`. Install that file in your application:
+For this version, `npm pack` creates `allorc-a423-sdk-0.9.0.tgz`. Install that file in your application:
 
 ```sh
-npm install /absolute/path/allorc-a423-sdk-0.8.1.tgz ethers@^6.15.0
+npm install /absolute/path/allorc-a423-sdk-0.9.0.tgz ethers@^6.15.0
 ```
 
 Keep the tarball or pin a source commit for reproducible evaluation. If the GitHub branch has not received the latest commit, cloning it cannot provide that commit's features. Never assume an npm update, GitHub push and contract deployment are the same operation.
@@ -190,6 +191,48 @@ All money values above are **raw integer token units**, not dollars or decimal t
 
 You can register multiple network/contract/token deployments through `escrows`. Each job is bound to its agreed deployment. Switching RPC URLs never moves an existing job's funds to another chain. The reference adapters check the RPC chain ID, escrow token and agreement fields before acting. Connection/eligibility checks occur when used; initialization is not proof that a contract was deployed or funded.
 
+## Mandates: actions, budget and lifetime
+
+**Mandates default to all supported actions, unlimited budget and unlimited lifetime.** There is no expiry unless configured. This is a flat per-agent policy, with no owner/issuer or parent hierarchy.
+
+Register constraints during initialization:
+
+```js
+const app = createEscrowApplication({
+  ...yourExistingConfiguration,
+  mandates: [{
+    agentId: 'buyer',
+    actions: 'all', // Or an explicit list such as ['create', 'quote', 'accept', 'fund']
+    budget: {
+      chainId,
+      tokenAddress,
+      total: '1000000', // One shared raw-token budget across jobs; optional
+    },
+    duration: {weeks: 4}, // Exactly 28 days; optional
+  }],
+});
+await app.ready(); // Wait for durable registration before serving requests.
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `agentId` | Required for an entry | Authenticated agent this flat mandate constrains |
+| `id` | `agentId` | Stable mandate identity; restart retains the same deadline/budget |
+| `actions` | `'all'` | Supported SDK actions; `[]` denies state-changing actions |
+| `budget` | No limit | Optional `total`, `daily`, `perTransaction` caps in one explicit chain/token currency |
+| `duration` | Lifetime | `'lifetime'` or one positive unit: `{weeks}`, `{days}`, `{hours}`, `{seconds}` |
+| `expiresAt` | No end date | Absolute Unix seconds; alternative to `duration` |
+
+**Omitted expiry, `duration: 'lifetime'`, or `expiresAt: null` means logical infinity.** JavaScript `expiresAt: Infinity` is normalized to `null` for storage. Use either `duration` or `expiresAt`, not both. Four weeks does not restart each time the SDK restarts.
+
+Omitting `mandates` entirely, or registering only `{agentId: 'researcher'}`, leaves that agent's mandate unlimited. Agents absent from the array also use these defaults. Authentication, job roles, state guards, available balances and stricter signing/spending policies still apply. A lifetime mandate is not a lifetime authentication credential.
+
+Finite budgets are shared across jobs, not replenished per job or automatically after a refund. A finite cap requires `chainId` and `tokenAddress`; omit the budget for unrestricted currency spending within your registered deployments. `limitsFor` is an optional additional wallet-level cap; its factory default is also unlimited. Signing approval remains explicit.
+
+Use `SDK_ACTIONS` from `@allorc/a423-sdk/mandate` for the actual predefined action catalogue, and `app.mandates.get(agentId)` to inspect the effective configuration. Reads and observe-only reconciliation remain available after expiry; new state changes, execution resumes and broadcasts are blocked. Expiry does not cancel a job, revoke an external signature or unlock on-chain funds.
+
+See [MANDATES.md](./MANDATES.md) for action names, all budget fields, durable renewal, worker behavior and custom adapter wiring.
+
 ## Configuration arguments
 
 ### Application factory: `createEscrowApplication(options)`
@@ -201,17 +244,18 @@ You can register multiple network/contract/token deployments through `escrows`. 
 | `escrows` | Required; nonempty | Allowlist of supported chain deployments; fields below |
 | `signerFor(actor)` | Required callback | Returns the authorized wallet/signer for an actor; reject unknown actors |
 | `addressFor(actor)` | Required callback | Returns that actor's trusted wallet address |
-| `limitsFor(context)` | Required callback | Raw-token `perTransaction`, `daily`, `total` funding caps |
+| `limitsFor(context)` | Optional; unlimited by default | Raw-token `perTransaction`, `daily`, `total` funding caps |
 | `approveSigning(context)` | Required callback | Explicitly permits or denies a concrete signing/broadcast intent |
 | `validateArtifact(context)` | Required for verification | Checks the submitted artifact commitment against accepted criteria |
 | `execute(context)` | Optional | Your actual work runner; returns a real `result_hash` and honors its abort signal |
+| `mandates` | `[]`; unrestricted defaults | Flat per-agent actions, shared budget and lifetime constraints |
 | `settlementPolicy` | Disabled when omitted | Enables the optional cost/profit policy described below |
 | `keeperEnabled` | `false` | Allows the operational worker to execute eligible maintenance actions when run |
 | `forwardCancellations` | `true` | Saves accepted cancellation JSON, then attempts escrow execution; `false` stages it only |
 | `requireIndependentArbitrator` | `true` | Requires arbiter wallet to differ from payer, worker and verifier |
 | `allowAuthorityRequest(request)` | Deny by default | Explicit request policy for optional authority challenge/exchange routes |
 
-The factory returns `workflow`, `handler`, `applicationOptions`, `workerOptions`, `chatTools(actor)` and an optional `profit` service. No worker is scheduled just because `keeperEnabled` is set. Run [scripts/operations-worker.mjs](./scripts/operations-worker.mjs) with your exported configuration.
+The factory returns `mandates`, `ready()`, `workflow`, `handler`, `applicationOptions`, `workerOptions`, `chatTools(actor)` and an optional `profit` service. No worker is scheduled just because `keeperEnabled` is set. Run [scripts/operations-worker.mjs](./scripts/operations-worker.mjs) with your exported configuration.
 
 ### Each entry in `escrows`
 
@@ -557,6 +601,7 @@ SDK profit settings cannot constrain direct external contract calls or prove rep
 |---|---|
 | `@allorc/a423-sdk/workflow` | Agreements, roles, CAS workflow, typed HTTP client/handler, cancellation and reopening |
 | `@allorc/a423-sdk/escrow` | Reference contract ABI/bytecode, chain adapters, wallet consent, journaled settlement, registry/indexer/signing helpers |
+| `@allorc/a423-sdk/mandate` | Flat action permissions, durable shared budgets and optional expiry; all unrestricted by default |
 | `@allorc/a423-sdk/policy` | Pure profit calculator, configuration, private cost service, projections and prompt fragments |
 | `@allorc/a423-sdk/storage` | Single-host durable SQLite jobs, transaction journal, queue, KV and spending reservations |
 | `@allorc/a423-sdk/authority` | Approved enrollment, challenge credentials, revocation and renewal |
@@ -566,6 +611,7 @@ SDK profit settings cannot constrain direct external contract calls or prove rep
 | [OPERATIONS.md](./OPERATIONS.md) | Authority setup, storage, signing, workers, events, deployment and operations |
 | [SETTLEMENT.md](./SETTLEMENT.md) | On-chain proposals, counters, arbitration, fallback and ledger |
 | [CANCELLATION.md](./CANCELLATION.md) | Accepted JSON, final receipts, retry/recovery and controlled reopening |
+| [MANDATES.md](./MANDATES.md) | Unlimited defaults, action catalogue, budgets, four-week/lifetime examples and renewal |
 | [PROFIT-POLICY.md](./PROFIT-POLICY.md) | Threshold math, privacy, owner exceptions, initialization and app migration |
 | [INTEGRATION.md](./INTEGRATION.md) | Existing-app migration checklist |
 | [LEGACY.md](./LEGACY.md) | Older root API; do not confuse it with the reference escrow workflow |

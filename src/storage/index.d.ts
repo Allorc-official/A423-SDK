@@ -26,7 +26,7 @@ export interface DurableQueue {
  get(id: string): Promise<{id: string; kind: string; payload: unknown; status: string; attempts: number; result: unknown} | null>;
 }
 export interface SpendingStore {
- reserve(input: {id: string;scope: string;amount: string;perTransaction: string;daily: string;total: string;now?: number}): Promise<boolean>;
+ reserve(input: {id: string;scope: string;amount: string;perTransaction: string | null;daily: string | null;total: string | null;now?: number}): Promise<boolean>;
  release(id: string): Promise<void>;
 }
 export interface SqliteStorage {

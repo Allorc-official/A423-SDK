@@ -147,3 +147,10 @@ test('queued execution receives an abort signal when cancellation pauses work',a
  await assert.rejects(op.runExecutionOnce({workflow:w,queue:s.queue,leaseMs:90,beforeExecute:async()=>true,execute:async({signal})=>{const current=await s.jobs.get(job.id);await s.jobs.compareAndSet(job.id,current.version,{...current,version:current.version+1,pending:{action:'propose_settlement'}});return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}}),{code:'WORK_PAUSED'});
  }finally{s.close();}
 });
+test('queued execution cooperatively aborts when its mandate no longer permits running work',async()=>{
+ const s=createSqliteStorage({filename:':memory:'});try{
+ const w=createWorkflow({store:s.jobs});let job=await w.create({id:'mandate-run',participants},'buyer');job={...job,version:2,state:'running',agreement:{revision:1,hash:'test',terms:{task},accepted_by:['buyer','worker']},events:[...job.events,{sequence:2,type:'start.confirmed',actor_id:'worker',at:new Date().toISOString(),data:{}}]};await s.jobs.compareAndSet(job.id,1,job);await op.enqueueRunningJobs({store:s.jobs,queue:s.queue});
+ await assert.rejects(op.runExecutionOnce({workflow:w,queue:s.queue,leaseMs:90,beforeExecute:async()=>true,canContinue:async()=>false,execute:async({signal})=>new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}))}),/Execution mandate expired/);
+ assert.equal((await w.get(job.id,'worker')).submission,null);
+ }finally{s.close();}
+});

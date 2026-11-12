@@ -21,3 +21,7 @@ Closing settlements in 0.5 require a new deployment and exact current proposal a
 ## Off-chain profit policy (0.8)
 
 Private cost snapshots and exception decisions live in backend KV, not agreement terms/events. Configure role-aware projectors and never share worker-private responses through public caches. The policy is opt-in and cannot constrain direct external contract calls or prove costs are real. Owner exceptions must be checked by a trusted server approval system, never client flags. Malformed-pending recovery requires an adapter impossibility proof and refuses any known signed/external intent; do not add permissive recovery hooks. See PROFIT-POLICY.md.
+
+## Flat mandates (0.9)
+
+Mandate defaults intentionally add no action, budget or lifetime limits. Configure restrictions in trusted backend initialization; unconfigured agents remain unrestricted by the mandate layer. This does not replace credential, role, job-state, signing or contract checks. Finite budgets bind one chain/token and conservatively reserve funding principal across jobs; refunds do not auto-replenish them. Expiry cannot recall a signed or broadcast transaction. Read-only reconciliation stays available, while signing/resume and new mutations require a live mandate. Durable store/configuration consistency is required across instances. No new on-chain revocation or parent/owner hierarchy is claimed.

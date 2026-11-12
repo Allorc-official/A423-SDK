@@ -8,9 +8,13 @@ Version 0.5 adds closing negotiation, a paused-work state, a separate escrow led
 
 This guide covers concrete SDK modules and their deployment boundaries. The remote MVP's source was unavailable during this SDK change, so its chat tools, dashboard, environment, reset route and testnet deployment have not been modified. Use the supplied bridge in that repository, then run the actual app's integration tests. Existing contract-level constraints remain explicit.
 
+## Mandates at startup
+
+The factory now accepts flat `mandates` entries and exposes `await app.ready()`. By default actions, budget and lifetime are unrestricted; no expiry is inferred. Finite budgets and four-week/absolute durations are explicit and durable across restart. `limitsFor` is optional and defaults to null (unlimited) caps. Signing approvals and authority/role checks still apply. Read [MANDATES.md](./MANDATES.md) before defining restricted action lists or renewing a finite mandate.
+
 ## Complete application factory
 
-`createEscrowApplication` wires the concrete implementations into one handler and worker configuration. Supply `storage`, `authority`, allowlisted `escrows` (provider/chain/contract/token/confirmations), `signerFor`, `addressFor`, raw-token `limitsFor`, explicit `approveSigning`, and real `validateArtifact`/optional `execute` handlers. It composes active-authority checks, spending reservations, job safety, task validation, consent, fresh receipts, chat projections and maintenance. Independent arbitration is required by default at the application policy level (arbitrator differs from payer, worker and verifier), even though the reference contract permits verifier/arbitrator overlap. `keeperEnabled` is false by default.
+`createEscrowApplication` wires the concrete implementations into one handler and worker configuration. Supply `storage`, `authority`, allowlisted `escrows` (provider/chain/contract/token/confirmations), `signerFor`, `addressFor`, optional raw-token `limitsFor`, explicit `approveSigning`, and real `validateArtifact`/optional `execute` handlers. It composes active-authority checks, spending reservations, job safety, task validation, consent, fresh receipts, chat projections and maintenance. Independent arbitration is required by default at the application policy level (arbitrator differs from payer, worker and verifier), even though the reference contract permits verifier/arbitrator overlap. `keeperEnabled` is false by default.
 
 ```ts
 const app = createEscrowApplication({

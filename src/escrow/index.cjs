@@ -5,17 +5,7 @@ const artifact = require('./artifact.json');
 const ABI = artifact.abi;
 const TOKEN_ABI = ['function allowance(address,address) view returns(uint256)','function approve(address,uint256) returns(bool)'];
 const TERMS_TYPES = { Terms: [ ['jobId','bytes32'],['payer','address'],['worker','address'],['verifier','address'],['arbitrator','address'],['amount','uint256'],['workDeadline','uint64'],['reviewDeadline','uint64'],['resolutionDeadline','uint64'],['timeoutWorkerBps','uint16'],['agreementHash','bytes32'] ].map(([name,type])=>({name,type})) };
-const transitions = {
-  approve_cancellation: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
-  execute_cancellation: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settled',effect:true},
-  propose_settlement: {from:['funded','running','submitted','verified'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
-  counter_settlement: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settlement_negotiation',effect:true},
-  accept_settlement: {from:['settlement_negotiation'],roles:['requester','worker'],to:'settled',effect:true},
-  refund: {from:['funded','running','settlement_negotiation','disputed'],roles:['requester'],to:'refunded',effect:true},
-  dispute: {from:['funded','running','submitted','verified','settlement_negotiation'],roles:['requester','worker','verifier'],to:'disputed',effect:true},
-  resolve: {from:['disputed'],roles:['arbitrator'],to:'settled',effect:true},
-  timeout: {from:['funded','running','submitted','verified','disputed','settlement_negotiation'],roles:['requester','worker','verifier','arbitrator'],to:'settled',effect:true}
-};
+const {ESCROW_TRANSITIONS:transitions}=require('../workflow-actions.cjs');
 function check(condition,message) { if(!condition) throw new Error('Escrow: '+message); }
 function positive(value,name) { check(typeof value==='string' && /^[1-9][0-9]*$/.test(value),name+' must be a positive decimal string');const n=BigInt(value);check(n<(1n<<256n),name+' exceeds uint256');return n; }
 function bytes32(value) { check(typeof value==='string' && /^0x[0-9a-fA-F]{64}$/.test(value) && value!==ZeroHash,'nonzero bytes32 required');return value; }

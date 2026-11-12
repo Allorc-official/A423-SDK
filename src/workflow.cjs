@@ -15,22 +15,7 @@ function canonical(value) {
 }
 function digest(value) { return createHash('sha256').update(canonical(value)).digest('hex'); }
 function identifier(value) { if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new TypeError('IDs must contain 1–128 letters, digits, underscores or hyphens'); return value; }
-const RULES = {
-  quote: { from: ['draft', 'quoted', 'accepted'], roles: ['requester', 'worker'], to: 'quoted' },
-  accept: { from: ['quoted'], roles: ['requester', 'worker'], to: 'quoted' },
-  fund: { from: ['accepted'], roles: ['requester'], to: 'funded', effect: true },
-  start: { from: ['funded'], roles: ['worker'], to: 'running', effect: true },
-  submit: { from: ['running'], roles: ['worker'], to: 'submitted', effect: true },
-  verify: { from: ['submitted'], roles: ['verifier'], to: 'verified', effect: true },
-  release: { from: ['verified'], roles: ['verifier'], to: 'paid', effect: true },
-  refund: { from: ['funded', 'running'], roles: ['requester'], to: 'refunded', effect: true },
-  decline: { from: ['draft', 'quoted', 'accepted'], roles: ['worker'], to: 'cancelled' },
-  reopen: { from: ['cancelled'], roles: ['requester', 'worker'], to: 'draft' },
-  cancel: { from: ['draft', 'quoted', 'accepted'], roles: ['requester'], to: 'cancelled' },
-  expire: { from: ['draft', 'quoted', 'accepted'], roles: ['requester', 'worker'], to: 'expired', effect: true },
-  dispute: { from: ['submitted', 'verified'], roles: ['requester', 'worker', 'verifier'], to: 'disputed' },
-  resolve: { from: ['disputed'], roles: ['verifier'], to: 'resolved', effect: true }
-};
+const {DEFAULT_TRANSITIONS:RULES}=require('./workflow-actions.cjs');
 /** Pure canonical JSON SHA-256. This is an integrity commitment, not authentication. */
 function hashAgreement(terms) { return digest(terms); }
 function createWorkflow({ store, adapters = {}, authorize, prepareInput, validateTerms, validateEvidence, transitions = {} } = {}) {

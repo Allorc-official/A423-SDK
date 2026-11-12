@@ -1,3 +1,7 @@
+# Flat mandates in 0.9
+
+The factory accepts `mandates` at initialization. Defaults are all supported actions, unlimited budget and no expiry. Use `duration: {weeks:4}` or an absolute `expiresAt` to constrain lifetime, and await `app.ready()` for durable registration. `limitsFor` is optional with unlimited defaults; signing approval, identity and role checks remain explicit. See [MANDATES.md](./MANDATES.md).
+
 # Profit-driven settlement in 0.8
 
 [Start here: installation, arguments and lifecycle maps](./README.md) · [All examples](./examples/README.md)
@@ -27,7 +31,7 @@ The remote MVP was not available in the SDK workspace; these utilities do not im
 Install after the maintainer publishes:
 
 ```sh
-npm install @allorc/a423-sdk@0.8.1
+npm install @allorc/a423-sdk@0.9.0
 ```
 
 For testing before publication, install the maintainer's `npm pack` tarball instead. Do not silently install 0.1 and assume the workflow entry point exists.

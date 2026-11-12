@@ -401,3 +401,30 @@ test('pending recovery: malformed submit is safely rejected without altering cus
  const validCtx={job,input:{result_hash:hash('valid')},operation:{id:'valid-op',actor:'worker'}};await assert.rejects(clean.adapters.submit.rejectPending(validCtx),/syntactically impossible/);
  await advance(301);await clean.act('timeout','buyer');
 });
+test('mandates: factory enforces flat actions, shared job budget and expiry; defaults need no limits callback',async()=>{
+ const {createSqliteStorage}=require('../src/storage/index.cjs'),{createEscrowApplication}=require('../src/operations/index.cjs');const storage=createSqliteStorage({filename:':memory:'});let clock=1000000;
+ try{
+ const first=await fixture('mandate_first',{workflowStore:storage.jobs,transactions:storage.transactions});const second=await fixture('mandate_second',{workflowStore:storage.jobs,transactions:storage.transactions});
+ const authority={isActive:async()=>true,verifyCredential:async sub=>({sub})};
+ const app=createEscrowApplication({storage,authority,escrows:[{provider,...config,confirmations:1}],signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,approveSigning:async()=>true,validateArtifact:async()=>true,mandateNow:()=>clock,mandates:[{agentId:'buyer',budget:{chainId:31337,tokenAddress:config.tokenAddress,total:'150'},duration:{weeks:4}},{agentId:'worker',actions:['quote','accept'],expiresAt:1010}]});await app.ready();
+ async function act(id,name,input,key=name){let job;for(let i=0;i<8;i++){job=await app.workflow.act(id,name,input,{actor:'buyer',idempotencyKey:key});if(!job.pending)return job;await provider.send('evm_mine',[]);}throw Error('pending');}
+ const funded=await act(first.id,'fund',{worker_signature:first.signature});assert.equal(funded.state,'funded');
+ await assert.rejects(app.workflow.act(first.id,'start',{}, {actor:'worker',idempotencyKey:'start-denied'}),{code:'FORBIDDEN'});
+ const journalBefore=(await storage.transactions.list()).length;const denied=await act(second.id,'fund',{worker_signature:second.signature});assert.equal(denied.state,'accepted');assert.equal((await storage.transactions.list()).length,journalBefore);assert.equal(Number((await escrow.getJob(second.consent.value.jobId)).state),0);
+ clock=1010000;await assert.rejects(app.workflow.act(second.id,'quote',{terms:second.terms},{actor:'worker',idempotencyKey:'expired-quote'}),{code:'FORBIDDEN'});
+ assert.equal((await app.mandates.get('buyer')).expiresAt,1000+4*7*86400);assert.equal((await app.mandates.get('verifier')).expiresAt,null);
+ await advance(101);await act(first.id,'refund',{});
+ }finally{storage.close();}
+});
+test('mandates: expiration between signature and broadcast blocks sending but not observe-only reconciliation',async()=>{
+ const {createSqliteStorage}=require('../src/storage/index.cjs'),{createEscrowApplication}=require('../src/operations/index.cjs');const storage=createSqliteStorage({filename:':memory:'});let clock=1000000;
+ try{
+ const f=await fixture('mandate_race',{workflowStore:storage.jobs,transactions:storage.transactions});let broadcasts=0;
+ const wrapped=new Proxy(provider,{get(target,key){if(key==='broadcastTransaction')return async raw=>{broadcasts++;return target.broadcastTransaction(raw);};const value=target[key];return typeof value==='function'?value.bind(target):value;}});
+ const app=createEscrowApplication({storage,authority:{isActive:async()=>true},escrows:[{provider:wrapped,...config,confirmations:1}],signerFor:async actor=>wallets[actors[actor]],addressFor:async actor=>wallets[actors[actor]].address,approveSigning:async ctx=>{if(ctx.phase==='broadcast')clock=1010000;return true;},validateArtifact:async()=>true,mandateNow:()=>clock,mandates:[{agentId:'buyer',duration:{seconds:10}}]});await app.ready();
+ await assert.rejects(app.workflow.act(f.id,'fund',{worker_signature:f.signature},{actor:'buyer',idempotencyKey:'fund-expiring'}),/broadcast policy denied/);
+ assert.equal(broadcasts,0);assert.ok((await storage.transactions.list())[0].raw);assert.equal(Number((await escrow.getJob(f.consent.value.jobId)).state),0);
+ const observed=await app.workflow.reconcile(f.id,'buyer');assert.ok(observed.pending);assert.equal(broadcasts,0);
+ await assert.rejects(app.workflow.resume(f.id,'buyer'),{code:'FORBIDDEN'});
+ }finally{storage.close();}
+});

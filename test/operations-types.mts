@@ -23,3 +23,8 @@ await workflow.rejectPendingOperation('one',{operation_id:'submit-op',reason:'Ma
 
 const configurable=createProfitSettlementService({kv:db.kv,costBasisFor,budgetFor:async()=> '100',thresholds:{target_margin_bps:3000,min_margin_bps:500,max_margin_bps:4000,require_counter:false}});
 const configuredTarget: number=configurable.configuration.target_margin_bps;
+import {createMandateRegistry,normalizeMandate,SDK_ACTIONS,type Mandate} from '@allorc/a423-sdk/mandate';
+const flatMandate: Mandate={agentId:'buyer',actions:['create','quote','accept','fund'],duration:{weeks:4},budget:{chainId:31337,tokenAddress:'0x0000000000000000000000000000000000000001',total:'100',daily:null}};
+normalizeMandate(flatMandate);
+const registry=createMandateRegistry({mandates:[flatMandate],kv:db.kv,spending:db.spending});
+await registry.ready();await registry.get('buyer');void SDK_ACTIONS;

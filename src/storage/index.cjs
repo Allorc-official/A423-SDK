@@ -64,7 +64,7 @@ function createSqliteStorage({filename,busyTimeoutMs=5000}={}) {
       return atomic(()=>{const old=db.prepare('SELECT * FROM a423_spend WHERE id=?').get(id);if(old){if(old.scope!==scope||old.amount!==amount)throw Error('Spending idempotency conflict');}
         const rows=db.prepare('SELECT amount,day FROM a423_spend WHERE scope=? AND id<>?').all(scope,id);const all=rows.reduce((a,r)=>a+BigInt(r.amount),0n),today=rows.filter(r=>r.day===day).reduce((a,r)=>a+BigInt(r.amount),0n);
         if(perTransaction===undefined||daily===undefined||total===undefined)throw Error('Explicit per-transaction, daily and total caps required');
-        if(n>value(perTransaction)||n+today>value(daily)||n+all>value(total)){const error=Error('Spending limit exceeded');error.code='SPENDING_LIMIT_EXCEEDED';throw error;}
+        if((perTransaction!==null&&n>value(perTransaction))||(daily!==null&&n+today>value(daily))||(total!==null&&n+all>value(total))){const error=Error('Spending limit exceeded');error.code='SPENDING_LIMIT_EXCEEDED';throw error;}
         db.prepare('INSERT INTO a423_spend VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET day=excluded.day,at=excluded.at').run(id,scope,amount,day,now);return true;});
     },
     // Conservative reservations persist after approvals and uncertain outcomes. Release only after external reconciliation.

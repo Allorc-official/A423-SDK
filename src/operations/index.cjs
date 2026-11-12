@@ -59,10 +59,10 @@ function createExpiryAdapter({now=()=>Date.now()}={}){const run=async({job})=>{
  if(!Number.isSafeInteger(expiry)||Math.floor(now()/1000)<=expiry)return {status:'rejected',reason:'Agreement has not expired'};
  return {status:'confirmed',evidence:{expires_at:expiry,observed_at:new Date(now()).toISOString()}};
 };return {execute:run,reconcile:run};}
-async function runExecutionOnce({workflow,queue,execute,beforeExecute,leaseMs=30000}={}){
+async function runExecutionOnce({workflow,queue,execute,beforeExecute,canContinue,leaseMs=30000}={}){
  const item=await queue.claim({kind:'execution',leaseMs});if(!item)return null;
  const controller=new AbortController();
- const heartbeat=setInterval(async()=>{try{if(!await queue.heartbeat(item.id,item.lease,{leaseMs}))throw Error('Execution lease lost');const current=await workflow.assertSafe(item.payload.job_id,item.payload.actor);if(current.state!=='running')throw Error('Work paused');}catch(error){controller.abort(error);}},Math.max(1,Math.min(1000,Math.floor(leaseMs/3))));
+ const heartbeat=setInterval(async()=>{try{if(!await queue.heartbeat(item.id,item.lease,{leaseMs}))throw Error('Execution lease lost');const current=await workflow.assertSafe(item.payload.job_id,item.payload.actor);if(current.state!=='running')throw Error('Work paused');if(canContinue&&await canContinue(current)!==true)throw Error('Execution mandate expired or action denied');}catch(error){controller.abort(error);}},Math.max(1,Math.min(1000,Math.floor(leaseMs/3))));
  try{
   let result=item.result;
   if(!result){const job=await workflow.assertSafe(item.payload.job_id,item.payload.actor);assert(job.state==='running','Work requires running state');validateTask(job.agreement.terms.task);assert(typeof beforeExecute==='function'&&await beforeExecute(job)===true,'Execution eligibility check required');result=await execute({job,idempotencyKey:item.id,signal:controller.signal});assert(await queue.checkpoint(item.id,item.lease,result),'Execution lease lost');}

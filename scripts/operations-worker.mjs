@@ -14,7 +14,7 @@ while(!controller.signal.aborted){
   const maintenance=await runMaintenanceOnce({workflow:app.workflow,store:app.store,actorFor:worker.actorFor,allowExecute:worker.allowExecute===true});
   for(const result of maintenance)if(result.error)console.error('A423 maintenance failed for job',result.id);
   await enqueueRunningJobs({store:app.store,queue:app.queue});
-  if(worker.execute)await runExecutionOnce({workflow:app.workflow,queue:app.queue,execute:worker.execute,beforeExecute:worker.beforeExecute});
+  if(worker.execute)await runExecutionOnce({workflow:app.workflow,queue:app.queue,execute:worker.execute,beforeExecute:worker.beforeExecute,canContinue:worker.canContinue});
   if(worker.webhooks){await worker.webhooks.project(app.store);for(let i=0;i<10;i++)if(!await worker.webhooks.deliverOne())break;}
   if(worker.authority)await worker.authority.pruneChallenges();
  }catch(error){console.error('A423 worker tick failed:',error.code||error.name);}

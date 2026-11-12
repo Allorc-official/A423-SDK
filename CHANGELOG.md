@@ -10,6 +10,14 @@
 - Add a runnable no-chain quickstart and an examples index; include both in the npm package.
 - Explain published versus source versions, private economics, cancellation/reopening boundaries and actual receipt confirmation.
 
+## 0.9.0
+
+- Add flat per-agent mandates at initialization: supported action list, shared cross-job budget and absolute or duration-based expiry, with no owner/issuer hierarchy.
+- Default to all supported actions, unlimited budget and lifetime. Make additional factory wallet caps optional; explicit null caps are unlimited.
+- Persist mandate registration/deadline and atomic budget reservations across restart, with checks before workflow actions and signing/broadcast.
+- Keep observations available after expiry; cooperatively abort configured worker execution and deny new effects.
+- Export an authoritative SDK action catalogue and document four-week/lifetime registration and explicit renewal.
+
 ## 0.8.1
 
 - Accept direct `settlementPolicy.thresholds` initialization arguments alongside the existing policy-builder form (mutually exclusive).

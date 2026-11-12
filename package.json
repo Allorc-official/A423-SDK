@@ -1,6 +1,6 @@
 {
   "name": "@allorc/a423-sdk",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "Experimental backend SDK for agent job agreements, durable workflows, ERC-20 escrow, negotiated settlement and configurable profit policies",
   "license": "MIT",
   "type": "commonjs",
@@ -46,6 +46,11 @@
       "types": "./src/policy/index.d.ts",
       "import": "./src/policy/index.mjs",
       "require": "./src/policy/index.cjs"
+    },
+    "./mandate": {
+      "types": "./src/mandate/index.d.ts",
+      "import": "./src/mandate/index.mjs",
+      "require": "./src/mandate/index.cjs"
     }
   },
   "files": [
@@ -85,7 +90,10 @@
     "PROFIT-POLICY.md",
     "examples/quickstart.mjs",
     "examples/README.md",
-    "docs/diagrams"
+    "docs/diagrams",
+    "src/mandate",
+    "src/workflow-actions.cjs",
+    "MANDATES.md"
   ],
   "engines": {
     "node": ">=22.13"
